@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qresponder"
+version = "0.1.0"
+description = "Self-hostable, bring-your-own-model security-questionnaire automation. Grounded, cited, human-gated."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "QRESPONDER contributors" }]
+keywords = ["grc", "security", "questionnaire", "rag", "compliance", "soc2", "sig", "caiq"]
+
+# Phase 0 core dependencies. Heavier ML/retrieval deps live in optional extras
+# so the core loop stays installable and testable without them.
+dependencies = [
+    "pydantic>=2.5",
+    "typer>=0.12",
+    "pyyaml>=6.0",
+    "openpyxl>=3.1",
+    "python-docx>=1.1",
+    "pdfplumber>=0.11",
+]
+
+[project.optional-dependencies]
+# Cloud / API model providers
+anthropic = ["anthropic>=0.39"]
+openai = ["openai>=1.40"]
+# Phase 1 local retrieval + reranking stack (all local, offline-capable)
+retrieval = [
+    "rank-bm25>=0.2.2",
+    "sentence-transformers>=3.0",
+    "numpy>=1.26",
+]
+dev = ["pytest>=8.0", "pytest-cov>=5.0"]
+
+[project.scripts]
+qresponder = "qresponder.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"

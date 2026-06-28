@@ -1,0 +1,36 @@
+# Secrets — NEVER commit
+.env
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Tooling
+.mypy_cache/
+.ruff_cache/
+
+# Output artifacts
+out/
+*.local.yaml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local model caches (document first-run downloads instead of committing)
+models/
+.cache/

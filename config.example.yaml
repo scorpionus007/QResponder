@@ -1,0 +1,21 @@
+# QRESPONDER config file (optional). Environment variables / .env override these.
+# Copy to config.yaml to use. Secrets belong in .env, NOT here.
+
+llm_provider: anthropic          # anthropic | openai_compat | mock
+anthropic_model: claude-opus-4-8
+
+# OpenAI-compatible path
+llm_base_url: http://localhost:11434/v1
+llm_model: llama3.1
+
+kb_mode: in_context              # in_context | retrieval
+
+embedding_model: all-MiniLM-L6-v2
+reranker_model: BAAI/bge-reranker-base
+top_n_retrieve: 20
+top_k_context: 5
+rrf_k: 60
+
+max_kb_chars: 150000
+verify_faithfulness: true
+batch_size: 12

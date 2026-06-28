@@ -1,0 +1,30 @@
+# Answer Library (Tier 1) — the AUTHORITY (§5).
+# Human-approved Q&A pairs. A strong semantic match here is reused (lightly
+# reframed) and marked source_tier=1 — ~100% correct by construction.
+#
+# Every accepted/edited answer flows back here (the flywheel, §10).
+
+- question: "Do you encrypt data at rest?"
+  answer: >-
+    Yes. All customer data at rest is encrypted using AES-256. Encryption keys
+    are managed via our cloud provider's KMS with annual rotation.
+  tags: [soc2, encryption, security]
+  approved_by: security-team
+  version: 1
+
+- question: "Do you enforce multi-factor authentication (MFA) for employees?"
+  answer: >-
+    Yes. MFA is enforced for all employees on all corporate systems and the
+    identity provider (SSO), including VPN and administrative consoles.
+  tags: [soc2, access-control, mfa]
+  approved_by: security-team
+  version: 1
+
+- question: "Do you have a documented incident response plan?"
+  answer: >-
+    Yes. We maintain a documented Incident Response Plan that is reviewed
+    annually and tested via tabletop exercises. It defines severity levels,
+    roles, communication paths, and post-incident review.
+  tags: [soc2, incident-response]
+  approved_by: security-team
+  version: 1

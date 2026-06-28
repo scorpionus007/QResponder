@@ -1,0 +1,12 @@
+# Answer Library fixture (Tier 1). Mirrors qa.example.yaml but scoped for tests.
+- question: "Do you encrypt data at rest?"
+  answer: "Yes. All customer data at rest is encrypted using AES-256, with keys managed in KMS and rotated annually."
+  tags: [soc2, encryption]
+  approved_by: security-team
+  version: 1
+
+- question: "Do you enforce multi-factor authentication (MFA) for employees?"
+  answer: "Yes. MFA is enforced for all employees across all corporate systems and the SSO identity provider."
+  tags: [soc2, access-control, mfa]
+  approved_by: security-team
+  version: 1
