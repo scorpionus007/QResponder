@@ -22,8 +22,8 @@ import re
 from pathlib import Path
 
 from .base import KBChunk, _tokens
-from .in_context import _TEXT_EXTS, _extract_tags
-from .tags import in_scope
+from .in_context import _KB_EXTS, _extract_tags, _read_doc_text
+from .tags import in_scope, load_tag_sidecar
 
 log = logging.getLogger("qresponder.retrieval")
 
@@ -91,11 +91,12 @@ def chunk_kb_dir(kb_dir: str | Path) -> list[KBChunk]:
     d = Path(kb_dir)
     if not d.exists():
         return chunks
+    sidecar = load_tag_sidecar(d)  # UI-assigned tags take precedence
     for fp in sorted(d.rglob("*")):
-        if not fp.is_file() or fp.suffix.lower() not in _TEXT_EXTS:
+        if not fp.is_file() or fp.suffix.lower() not in _KB_EXTS:
             continue
-        text = fp.read_text(encoding="utf-8", errors="replace")
-        tags = _extract_tags(text)
+        text = _read_doc_text(fp)
+        tags = sidecar.get(fp.name) or _extract_tags(text)
         for piece in _pack_chunks(_structure_blocks(text)):
             chunks.append(KBChunk(source=fp.name, text=piece, tags=tags, tier=2))
     return chunks

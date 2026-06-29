@@ -17,8 +17,11 @@ contradiction — so QRESPONDER doesn't.
 > attachment resolution, format-perfect write-back, approve-back flywheel.
 > Phase 3: cross-source conflict detection + launch hardening (golden eval, CI,
 > demo). Phase 4: a local web review UI (`qresponder serve`) where every
-> accept/edit trains the Answer Library. Two-adapter BYOM, `doctor` preflight,
-> CLI, Docker, **77 tests, all offline**.
+> accept/edit trains the Answer Library. Phase 5: a guided setup wizard +
+> multi-workspace asset management — configure everything (model check, KB,
+> evidence, answers, settings) from the browser; only the API key stays in
+> `.env`. Two-adapter BYOM, `doctor` preflight, CLI, Docker, **91 tests, all
+> offline**.
 
 ## Why it's honest by construction
 
@@ -46,41 +49,71 @@ qresponder answer \
 Outputs land in `./out`: `answered.xlsx`, `results.json`, and a human-first
 `review.md` (NEEDS_REVIEW + LOW-confidence items first, grouped by reason).
 
-## Web review UI
+## Web UI — open it and follow the wizard (no files to edit)
 
-Prefer a UI? Launch the local review app:
+The fastest way in: launch the app and let the setup wizard hand-hold you
+through adding your model, knowledge base, approved answers, and evidence —
+**you never edit a config or YAML file by hand.**
 
 ```bash
 pip install -e ".[web]"     # FastAPI + uvicorn (or build the web Docker image)
 qresponder serve            # → http://127.0.0.1:8000
 ```
 
-> _Record the demo: run `qresponder serve`, do one run, and capture the review
-> screen → `docs/review-ui.png`. (Not committed — it's a per-environment asset.)_
+The only thing that lives outside the UI is the provider API key (in `.env`),
+and **local-model users need no key at all** — point `.env` at Ollama/vLLM and
+the wizard's *Run locally (private, no key)* path is the zero-config default.
 
-**The review loop (this is the product):**
-1. **New run** — upload the questionnaire; point at your `kb`, optional
-   `evidence` vault, and `qa.yaml` Answer Library; set tags/mode. The active
-   provider/model is shown read-only — **your API key never reaches the browser.**
-2. **Review queue** — each answer shows a confidence chip (green/amber/red), a
-   status/reason badge, and expandable citations. Flagged items get the right
-   panel: an **interpretation picker** (ambiguous), an **attachment confirm**
-   (evidence files), a **library-candidate** accept/reject, or a **conflict**
-   side-by-side to reconcile.
-3. **Accept / Edit + Accept** — and here's the flywheel: **every accept trains
-   your Answer Library**, and an *edited* answer trains on the edited text, not
-   the draft. The item shows an "added to library" badge. Coverage compounds with
-   use, independent of the model.
-4. **Export** — writes `answered.xlsx` + `results.json` + `review.md` and fills a
-   copy of your original template (falling back if it has embedded media).
-   Nothing is auto-submitted — the human gate is the whole point.
+> _Launch asset: run `qresponder serve`, walk the wizard, and capture the
+> wizard + review screens → `docs/wizard.png` / `docs/review-ui.png`. (Not
+> committed — per-environment.)_
 
-**Security note:** the UI binds **`127.0.0.1` by default and has no auth** — it
-handles your security posture, so don't expose it on a network without putting
-authentication / a reverse proxy in front first. `--host`/`--port` override the
-bind (you'll get a warning if you bind beyond localhost). Like the rest of the
-local path, the page loads **zero external assets** (no CDN, no web fonts) and
-sends no telemetry.
+### Workspaces
+
+Each **workspace** is an isolated bundle — one per client or framework (e.g.
+"Acme — SOC 2") — with its own knowledge base, evidence vault, approved-answer
+library, tags, and engine settings. Switch between them from the header. Assets
+live on disk under `workspaces/<slug>/` (`kb/`, `evidence/`, `qa.yaml`,
+`settings.yaml`, `runs/`) and **never leave the host**. Configure `WORKSPACES_DIR`
+to move them.
+
+### The setup wizard
+
+1. **Name** your workspace.
+2. **Model check** — *Run locally (no key)* or *Use an API* (the key stays in
+   `.env` server-side; the UI shows only the provider/model name). A **Test
+   connection** runs `doctor` — a green check is required to continue.
+3. **Knowledge base** — drag-and-drop your policies / SOC 2 summary / architecture
+   docs (PDF/DOCX/MD/TXT); tag each to scope which docs answer which questionnaire.
+4. **Approved answers** (optional) — answers you already trust (used first,
+   verbatim), or skip and let the flywheel build them.
+5. **Evidence vault** (optional) — the files attached to "please attach…"
+   questions.
+6. **Ready** — upload a questionnaire and run.
+
+### The review loop (this is the product)
+
+Each answer shows a confidence chip (green/amber/red), a status/reason badge, and
+expandable citations. Flagged items get the right panel: an **interpretation
+picker** (ambiguous), an **attachment confirm** (evidence), a **library-candidate**
+accept/reject, or a **conflict** side-by-side to reconcile. On **Accept / Edit +
+Accept**, the flywheel kicks in: **every accept trains that workspace's Answer
+Library** (edits train on the edited text), shown by an "added to library" badge.
+**Export** writes `answered.xlsx` + `results.json` + `review.md` and fills a copy
+of your original template. Nothing is auto-submitted — the human gate is the point.
+
+A persistent **Settings** page per workspace lets you manage all of the above
+later; empty states teach (the KB panel *is* the instruction until you add docs).
+
+### Security — read this before exposing it
+
+The UI **binds `127.0.0.1` and has no authentication**, and now your **entire
+knowledge base and answer library sit behind it.** Do **not** bind it to a
+network (`--host 0.0.0.0`) or publish it without putting authentication / a
+reverse proxy in front first — you'll get a loud warning if you bind beyond
+localhost. The provider key is never accepted, stored, or returned by any
+endpoint. Like the rest of the local path, the page loads **zero external
+assets** (no CDN, no web fonts) and sends **no telemetry**.
 
 ## The two connection paths
 
@@ -309,6 +342,9 @@ tag-scoped so GDPR questions don't pull SOC 2 evidence.
 - **Phase 4** — local web review UI (`qresponder serve`): upload → run → review
   queue with accept/edit/pick-interpretation/confirm-attachment/reconcile-conflict
   → export, with every accept training the Answer Library. ✅
+- **Phase 5** — guided setup wizard + multi-workspace asset management:
+  create/switch workspaces, upload & tag KB/evidence, CRUD approved answers, edit
+  engine settings — all from the browser; only the API key stays in `.env`. ✅
 
 **Deliberately out of scope** (with rationale): Tier-4 prior-submission mining
 (the flywheel already promotes accepted answers to higher-authority Tier-1);

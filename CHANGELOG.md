@@ -7,6 +7,17 @@ versioning.
 ## [Unreleased]
 
 ### Added
+- **Setup wizard + multi-workspace asset management (Phase 5)** — named,
+  isolated workspaces (`core/workspace.py`; each with its own kb/, evidence/,
+  qa.yaml, settings.yaml, runs/) under `WORKSPACES_DIR`. New web endpoints to
+  create/list/rename/delete workspaces; upload/validate/tag KB & evidence
+  (extension allow-list, sanitized filenames, `.tags.yaml` sidecar read by the
+  KB/evidence loaders); CRUD approved answers; read/update per-workspace engine
+  settings (no provider/key fields); live `/api/doctor` connection check;
+  workspace-scoped runs. A guided setup wizard, workspace switcher, and Settings
+  page in the (still vanilla, no-CDN) frontend. KB loaders now extract text from
+  PDF/DOCX via the ingest loaders. The provider/key remain in `.env` only — never
+  accepted, stored, or returned by any endpoint.
 - **Local web review UI (Phase 4)** — `qresponder serve` launches a FastAPI app
   (vanilla HTML/CSS/JS, no build, no CDN, no telemetry; binds 127.0.0.1, no
   keys in the browser). Upload → run → review queue (confidence chips, citations,

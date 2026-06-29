@@ -28,6 +28,7 @@ coverage.xml
 out/
 demo_out/
 web_runs/
+workspaces/
 *.local.yaml
 
 # OS

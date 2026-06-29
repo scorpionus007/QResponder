@@ -91,6 +91,12 @@ def _apply_to_library(library: AnswerLibrary, question: str, answer: str, approv
     return "added"
 
 
+def write_library(qa_path: str | Path, entries: list[LibraryEntry]) -> None:
+    """Atomically persist a list of LibraryEntry to a qa.yaml (used by the web
+    UI's edit/delete of approved answers)."""
+    _safe_write_yaml(Path(qa_path), _entries_to_dicts(entries))
+
+
 def approve_one(
     question: str,
     answer: str,

@@ -13,12 +13,29 @@ import re
 from pathlib import Path
 
 from .base import KBChunk
-from .tags import in_scope, normalize_tags
+from .tags import in_scope, load_tag_sidecar, normalize_tags
 
 log = logging.getLogger("qresponder.kb")
 
 _TEXT_EXTS = {".md", ".txt", ".markdown", ".rst"}
+# KB docs may also be PDF/DOCX; their text is extracted via the ingest loaders.
+_DOC_EXTS = {".pdf", ".docx"}
+_KB_EXTS = _TEXT_EXTS | _DOC_EXTS
 _TAGS_LINE = re.compile(r"^\s*tags?\s*:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
+
+
+def _read_doc_text(fp: Path) -> str:
+    """Plain text for a KB document. PDF/DOCX are extracted via the ingest
+    loaders (reusing engine code — no new parsing logic)."""
+    if fp.suffix.lower() in _TEXT_EXTS:
+        return fp.read_text(encoding="utf-8", errors="replace")
+    try:
+        from ..ingest.base import load_document
+
+        doc = load_document(fp)
+        return "\n\n".join(e.text for e in doc.elements)
+    except Exception:  # noqa: BLE001 - unreadable doc just contributes nothing
+        return ""
 
 
 def _extract_tags(text: str) -> list[str]:
@@ -48,11 +65,12 @@ class InContextKB:
         d = Path(kb_dir)
         if not d.exists():
             return cls(chunks)
+        sidecar = load_tag_sidecar(d)  # UI-assigned tags take precedence
         for fp in sorted(d.rglob("*")):
-            if not fp.is_file() or fp.suffix.lower() not in _TEXT_EXTS:
+            if not fp.is_file() or fp.suffix.lower() not in _KB_EXTS:
                 continue
-            text = fp.read_text(encoding="utf-8", errors="replace")
-            tags = _extract_tags(text)
+            text = _read_doc_text(fp)
+            tags = sidecar.get(fp.name) or _extract_tags(text)
             for para in _split_paragraphs(text):
                 chunks.append(
                     KBChunk(source=fp.name, text=para, tags=tags, tier=2)

@@ -15,7 +15,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from .tags import in_scope, normalize_tags
+from .tags import TAGS_SIDECAR, in_scope, load_tag_sidecar, normalize_tags
 
 log = logging.getLogger("qresponder.evidence")
 
@@ -79,8 +79,9 @@ class EvidenceIndex:
         d = Path(evidence_dir)
         if not d.exists():
             return cls(items)
+        sidecar = load_tag_sidecar(d)  # UI-assigned tags take precedence
         for fp in sorted(d.rglob("*")):
-            if not fp.is_file():
+            if not fp.is_file() or fp.name == TAGS_SIDECAR:
                 continue
             name = fp.name
             vmatch = _VERSION_RE.search(name)
@@ -90,7 +91,7 @@ class EvidenceIndex:
                     filename=name,
                     path=str(fp),
                     snippet=_head_text(fp),
-                    tags=_filename_tags(name),
+                    tags=sidecar.get(name) or _filename_tags(name),
                     version=int(vmatch.group(1)) if vmatch else None,
                     date=dmatch.group(1) if dmatch else None,
                     doc_type=fp.suffix.lower().lstrip("."),

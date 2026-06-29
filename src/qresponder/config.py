@@ -52,6 +52,9 @@ class Config(BaseModel):
     kb_mode: str = "in_context"  # in_context | retrieval
     evidence_dir: str | None = None  # evidence vault for attachment resolution (C2)
 
+    # --- Web UI -------------------------------------------------------------
+    workspaces_dir: str = "./workspaces"  # where per-workspace asset bundles live
+
     # --- Embeddings / reranker (Phase 1, local-first) -----------------------
     embedding_model: str = "all-MiniLM-L6-v2"
     reranker_model: str = "BAAI/bge-reranker-base"
@@ -125,6 +128,7 @@ _ENV_MAP = {
     "LLM_MODEL": "llm_model",
     "KB_MODE": "kb_mode",
     "EVIDENCE_DIR": "evidence_dir",
+    "WORKSPACES_DIR": "workspaces_dir",
     "EMBEDDING_MODEL": "embedding_model",
     "RERANKER_MODEL": "reranker_model",
     "TOP_N_RETRIEVE": "top_n_retrieve",
