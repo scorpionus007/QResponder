@@ -7,6 +7,27 @@ versioning.
 ## [Unreleased]
 
 ### Added
+- **Provably-superior phase (A–G).**
+  - **A — Provable accuracy:** RAGAS-aligned eval (faithfulness, answer relevancy,
+    context precision/recall, correctness) + retrieval Recall@K/MRR, a calibration
+    table (measured correctness per confidence bucket — proves HIGH means HIGH),
+    and abstention as a first-class metric. Reproducible mock baseline + CI gate.
+  - **B — Audit / evidence pack:** every answer carries a persisted `AuditTrail`
+    (retrieved → cited → faithfulness → confidence rationale → human action);
+    `qresponder audit` + web endpoint emit audit.json + audit.md (+zip).
+  - **C — Injection resistance (SafeRAG):** all untrusted content wrapped in DATA
+    blocks under a standing "data not instructions" system note; an injection
+    detector flags `injection_suspected` without ever obeying the directive.
+  - **D — Batch + ZIP:** `answer --batch` / web batch — isolated per-file runs,
+    summary, and a single zip; one bad file never sinks the batch.
+  - **E — CSV round-trip + dedup + SME routing:** export-flagged/import-answers
+    (trains the library + flips the run; re-syncs duplicates via Tier-1);
+    near-duplicate grouping (answer once, apply to all); tag→owner routing.
+  - **F — Excel data-validation/dropdown preservation** in write-back (+ coerce
+    to the allowed option).
+  - **G — Consistency over time** (`history_conflict` vs prior submissions),
+    **compound-question decomposition** (subanswers; flag if any part unsupported),
+    and **query normalization** (acronym expansion + boilerplate strip) for recall.
 - **Setup wizard + multi-workspace asset management (Phase 5)** — named,
   isolated workspaces (`core/workspace.py`; each with its own kb/, evidence/,
   qa.yaml, settings.yaml, runs/) under `WORKSPACES_DIR`. New web endpoints to
