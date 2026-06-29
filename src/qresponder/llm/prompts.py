@@ -24,7 +24,10 @@ EXTRACT_SYSTEM = (
     "Each item must be an object with keys: "
     "id (string), question_text (string), "
     "answer_type (one of: text, yes_no, multi_select, attachment), "
-    "section (string or null), location_hint (string or null), "
+    "section (string or null), location_hint (string or null — the question's "
+    "own cell/anchor), answer_location_hint (string or null — where the ANSWER "
+    "should be written, e.g. the response cell to the right or under a "
+    "Response/Answer/Comment column, when determinable from the layout), "
     "ambiguous (boolean), interpretations (array of strings)."
 )
 
@@ -80,6 +83,29 @@ def build_faithfulness_user(items: list[dict]) -> str:
     return (
         "Verify each item's faithfulness against its cited snippets.\n\n"
         + json.dumps(items, ensure_ascii=False, indent=2)
+    )
+
+
+# --- Ambiguity / interpretation drafting (Phase 2, §8) -----------------------
+
+INTERPRETATIONS_SYSTEM = (
+    "A questionnaire item is ambiguous and has multiple plausible "
+    "interpretations. Draft ONE grounded answer per interpretation, STRICTLY "
+    "from the provided knowledge base context. Never invent certifications, "
+    "controls, audits, or compliance status. Every answer must cite at least "
+    "one verbatim snippet from the context; if an interpretation is not "
+    "supported, set its status to 'needs_review' with empty citations. "
+    "Return ONLY a JSON array, no prose, no code fences. Each item: "
+    "{interpretation (string), answer (string), "
+    "citations (array of {source, snippet}), status (answered|needs_review)}."
+)
+
+
+def build_interpretations_user(question: str, interpretations: list[str], kb_context: str) -> str:
+    payload = {"question": question, "interpretations": interpretations}
+    return (
+        f"{KB_CONTEXT_MARKER}\n{kb_context}\n\n"
+        f"{QUESTIONS_MARKER}\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
     )
 
 

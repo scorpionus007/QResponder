@@ -77,10 +77,14 @@ def answer(
     questionnaire: str = typer.Option(..., "--questionnaire", "-q", help="xlsx/docx/pdf file"),
     kb: str = typer.Option(None, "--kb", help="Knowledge base directory (policies/evidence)"),
     qa: str = typer.Option(None, "--qa", help="Answer Library YAML (Tier 1)"),
+    evidence: str = typer.Option(None, "--evidence", help="Evidence vault dir for attachment resolution"),
     tags: str = typer.Option(None, "--tags", help="Comma-separated tag scope, e.g. hipaa,soc2"),
     mode: str = typer.Option(None, "--mode", help="in_context | retrieval (overrides config)"),
     out: str = typer.Option("./out", "--out", help="Output directory"),
     batch_size: int = typer.Option(None, "--batch-size", help="Questions per answer call"),
+    writeback: bool = typer.Option(
+        False, "--writeback", help="Also fill answers into a copy of the original file"
+    ),
     config_path: str = typer.Option("config.yaml", "--config"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ):
@@ -102,7 +106,8 @@ def answer(
         )
 
     scope = parse_tags(tags)
-    result = run_pipeline(questionnaire, kb, qa, cfg, scope_tags=scope)
+    result = run_pipeline(questionnaire, kb, qa, cfg, scope_tags=scope, evidence_dir=evidence)
+    # Always emit the safe Phase-0/1 artifacts.
     paths = write_all(result, out)
 
     from .models import Status
@@ -116,6 +121,23 @@ def answer(
     )
     for name, p in paths.items():
         typer.echo(f"  {name}: {p}")
+
+    # Optional format-perfect write-back into a COPY of the original (C3). Auto
+    # when answer anchors are present for an xlsx/docx source.
+    from .output.writeback import has_answer_anchors, write_back
+
+    src_ext = Path(questionnaire).suffix.lower()
+    do_writeback = writeback or (src_ext in {".xlsx", ".xlsm", ".docx"} and has_answer_anchors(result))
+    if do_writeback:
+        wb = write_back(result, questionnaire, out)
+        if wb.get("written"):
+            typer.echo(f"  writeback: {wb['written']} ({wb.get('cells', 0)} cell(s))")
+        elif wb.get("fallback"):
+            typer.secho(
+                f"  writeback skipped ({wb.get('reason')}); use the answered.* file above.",
+                fg=typer.colors.YELLOW,
+            )
+
     typer.echo("\nReview the draft (review.md) before using. Nothing was submitted.")
 
 
@@ -155,6 +177,26 @@ def eval(  # noqa: A001 - intentional command name
         cfg.kb_mode = mode
     report = run_eval(set_path, kb, qa, cfg)
     typer.echo(format_report(report))
+
+
+@app.command()
+def approve(
+    results: str = typer.Option(..., "--results", help="Reviewed results.json"),
+    qa: str = typer.Option(..., "--qa", help="Answer Library YAML to grow (created if missing)"),
+    by: str = typer.Option(None, "--by", help="Approver name recorded on entries"),
+    tags: str = typer.Option(None, "--tags", help="Comma-separated tags for approved entries"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+):
+    """Flywheel: approve reviewed answers into the Answer Library (versioned, de-duped)."""
+    _setup_logging(verbose)
+    from .core.flywheel import approve as approve_results
+
+    stats = approve_results(results, qa, approved_by=by, extra_tags=parse_tags(tags))
+    typer.secho(
+        f"Approved {stats['added']} new + {stats['updated']} updated entr(y/ies); "
+        f"library now {stats['total']} total.",
+        fg=typer.colors.GREEN,
+    )
 
 
 _INIT_FILES = {

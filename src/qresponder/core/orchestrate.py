@@ -93,6 +93,23 @@ def _attachment_result(q: Question) -> AnswerResult:
     )
 
 
+def _ambiguous_result(q: Question, candidates) -> AnswerResult:
+    """Ambiguous question (C1, §8): surface every interpretation's grounded draft
+    for the human to pick. Never collapse to one reading."""
+    return AnswerResult(
+        question_id=q.id,
+        question_text=q.text,
+        answer="",
+        answer_type=q.answer_type if q.answer_type != AnswerType.UNKNOWN else AnswerType.TEXT,
+        citations=[],
+        confidence=Confidence.LOW,
+        status=Status.NEEDS_REVIEW,
+        review_reason=ReviewReason.AMBIGUOUS,
+        candidates=candidates,
+        missing_info=f"Ambiguous — {len(candidates)} interpretations; choose one.",
+    )
+
+
 def _payload(q: Question) -> dict:
     return {
         "question_id": q.id,
@@ -108,20 +125,40 @@ def orchestrate(
     kb,
     config: Config,
     scope_tags=None,
+    evidence=None,
 ) -> list[AnswerResult]:
-    from .confidence import decide_confidence
+    from .confidence import decide_confidence, grounding_score
     from .faithfulness import verify_results
+    from .interpretations import answer_interpretations
 
     results: dict[str, AnswerResult] = {}
     to_generate: list[Question] = []
+    ambiguous_questions: list[Question] = []
     retrieval_score: dict[str, float | None] = {}
 
-    n_lib = 0
-    n_suggest = 0
-    n_attach = 0
+    retrieval_mode = config.kb_mode == "retrieval" and hasattr(kb, "retrieve")
+    shared_ctx = None
+    if not retrieval_mode:
+        shared_ctx = kb.assemble_context(scope_tags=scope_tags, max_chars=config.max_kb_chars)
+
+    def ctx_for(q: Question):
+        """(context, top_score) for a question — per-question in retrieval mode,
+        the shared assembled context otherwise."""
+        if retrieval_mode:
+            hits = kb.retrieve(q.text, scope_tags=scope_tags)
+            ctx = "\n\n".join(f"[source: {c.source}] {c.text}" for c, _ in hits)
+            return ctx, (hits[0][1] if hits else None)
+        return shared_ctx, None
+
+    n_lib = n_suggest = n_attach = n_ambig = 0
     for q in questions:
         if q.answer_type == AnswerType.ATTACHMENT:
-            results[q.id] = _attachment_result(q)
+            if evidence is not None:
+                from .attachments import resolve_attachment
+
+                results[q.id] = resolve_attachment(q, evidence, config, scope_tags=scope_tags)
+            else:
+                results[q.id] = _attachment_result(q)
             n_attach += 1
             continue
         hit = library.match(q.text, scope_tags=scope_tags)
@@ -134,28 +171,34 @@ def orchestrate(
                 results[q.id] = _library_suggest_result(q, entry, score)
                 n_suggest += 1
             continue
+        if q.ambiguous and len(q.interpretations) >= 2:
+            ambiguous_questions.append(q)
+            continue
         to_generate.append(q)
 
-    retrieval_mode = config.kb_mode == "retrieval" and hasattr(kb, "retrieve")
-    generated: list[AnswerResult] = []
+    # Ambiguous questions: draft one grounded answer per interpretation (C1).
+    for q in ambiguous_questions:
+        ctx, _ = ctx_for(q)
+        candidates = answer_interpretations(provider, q.text, q.interpretations, ctx)
+        results[q.id] = _ambiguous_result(q, candidates)
+        n_ambig += 1
 
+    generated: list[AnswerResult] = []
     if retrieval_mode:
         # Per-question retrieval: each question gets its own reranked top-k
         # context. Small N — no need to force shared-context batching (§B1).
         for q in to_generate:
-            hits = kb.retrieve(q.text, scope_tags=scope_tags)
-            ctx = "\n\n".join(f"[source: {c.source}] {c.text}" for c, _ in hits)
-            retrieval_score[q.id] = hits[0][1] if hits else None
+            ctx, score = ctx_for(q)
+            retrieval_score[q.id] = score
             for r in answer_batch(provider, ctx, [_payload(q)]):
                 results[r.question_id] = r
                 generated.append(r)
     else:
         # In-context mode: one shared, tag-scoped context; batched answering.
-        kb_context = kb.assemble_context(scope_tags=scope_tags, max_chars=config.max_kb_chars)
         batch_size = max(1, config.batch_size)
         for i in range(0, len(to_generate), batch_size):
             batch = to_generate[i : i + batch_size]
-            for r in answer_batch(provider, kb_context, [_payload(q) for q in batch]):
+            for r in answer_batch(provider, shared_ctx, [_payload(q) for q in batch]):
                 results[r.question_id] = r
                 generated.append(r)
                 retrieval_score.setdefault(r.question_id, None)
@@ -164,26 +207,45 @@ def orchestrate(
     # Tier-1, which never enters `generated`).
     verify_results(provider, generated, config)
 
-    # Finalize explainable confidence from signals (§11).
-    strong_threshold = getattr(config, "strong_rerank_score", 0.0)
+    # Finalize explainable confidence from signals (§11, S1).
     for r in generated:
         faithful = bool(r.citations) and all(c.faithful is True for c in r.citations)
+        if retrieval_mode:
+            score = retrieval_score.get(r.question_id)
+            threshold = getattr(config, "strong_rerank_score", 0.0)
+        else:
+            # In-context: derive a real grounding signal so HIGH is reachable
+            # when genuinely supported, not blocked by the missing reranker.
+            score = grounding_score(r.answer, [c.snippet for c in r.citations]) if r.citations else None
+            threshold = getattr(config, "strong_grounding_score", 0.85)
+        r.grounding_score = score
         r.confidence = decide_confidence(
             source_tier=r.source_tier,
             status=r.status,
             faithful=faithful,
-            retrieval_score=retrieval_score.get(r.question_id),
-            strong_threshold=strong_threshold,
+            retrieval_score=score,
+            strong_threshold=threshold,
         )
 
     log.info(
-        "Orchestrated: %d tier-1 reuse, %d library-candidate, %d attachment-flagged, %d generated (%s mode)",
+        "Orchestrated: %d tier-1 reuse, %d library-candidate, %d ambiguous, "
+        "%d attachment, %d generated (%s mode)",
         n_lib,
         n_suggest,
+        n_ambig,
         n_attach,
         len(generated),
         "retrieval" if retrieval_mode else "in_context",
     )
+    # Carry write-back anchors from the question onto its result (C3), so the
+    # output layer can fill the original template without re-deriving them.
+    qmap = {q.id: q for q in questions}
+    for r in results.values():
+        q = qmap.get(r.question_id)
+        if q is not None:
+            r.location_hint = q.location_hint
+            r.answer_location_hint = q.answer_location_hint
+
     # Preserve original order.
     ordered: list[AnswerResult] = []
     for q in questions:

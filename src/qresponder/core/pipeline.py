@@ -27,6 +27,7 @@ def run_pipeline(
     config: Config,
     scope_tags=None,
     provider: LLMProvider | None = None,
+    evidence_dir: str | None = None,
 ) -> QuestionnaireResult:
     provider = provider or make_provider(config)
 
@@ -44,8 +45,18 @@ def run_pipeline(
     else:
         kb = InContextKB.load(kb_dir)
 
+    # Evidence vault for attachment resolution (C2), if configured.
+    evidence = None
+    ev_dir = evidence_dir or config.evidence_dir
+    if ev_dir:
+        from ..kb.evidence import EvidenceIndex
+
+        evidence = EvidenceIndex.load(ev_dir)
+
     log.info("Answering %d question(s)", len(questions))
-    results = orchestrate(questions, provider, library, kb, config, scope_tags=scope_tags)
+    results = orchestrate(
+        questions, provider, library, kb, config, scope_tags=scope_tags, evidence=evidence
+    )
 
     answered = sum(1 for r in results if r.status == Status.ANSWERED)
     flagged = len(results) - answered

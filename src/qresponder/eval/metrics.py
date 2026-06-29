@@ -15,6 +15,7 @@ class EvalItemResult(BaseModel):
     recall_hit: bool | None = None  # None = N/A (no expected_source / not retrieval)
     faithful: bool | None = None
     correctness: float | None = None  # fraction of key_facts covered
+    grounding_score: float | None = None  # rerank (retrieval) or grounding (in-context)
     covered_facts: list[str] = Field(default_factory=list)
     missing_facts: list[str] = Field(default_factory=list)
 
@@ -26,5 +27,9 @@ class EvalReport(BaseModel):
     faithfulness_rate: float | None = None  # over answered items
     correctness: float | None = None      # mean key-fact coverage over graded items
     coverage: dict = Field(default_factory=dict)  # answered/flagged counts, %s, by_reason
+    # Grounding/rerank score distribution for answered vs flagged + a suggested
+    # threshold separating them (S2). The threshold is reranker-dependent.
+    score_distribution: dict = Field(default_factory=dict)
+    suggested_threshold: float | None = None
     items: list[EvalItemResult] = Field(default_factory=list)
     note: str = ""

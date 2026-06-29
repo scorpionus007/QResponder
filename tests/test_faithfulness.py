@@ -1,17 +1,24 @@
 """Faithfulness verification + confidence rule tests (B2). No network."""
 
 from qresponder.config import Config
-from qresponder.core.confidence import decide_confidence
+from qresponder.core.confidence import decide_confidence, grounding_score
 from qresponder.core.faithfulness import verify_results
+from qresponder.core.orchestrate import orchestrate
+from qresponder.kb.base import KBChunk
+from qresponder.kb.in_context import InContextKB
+from qresponder.kb.library import AnswerLibrary
 from qresponder.llm.mock import MockProvider
 from qresponder.models import (
     AnswerResult,
     AnswerType,
     Citation,
     Confidence,
+    Question,
     ReviewReason,
     Status,
 )
+
+_ENC = "All data at rest is encrypted using AES-256 with keys in KMS."
 
 
 def _generated_answered(qid="q1", answer="We are ISO 27001 certified."):
@@ -72,6 +79,48 @@ def test_faithfulness_disabled_skips_check():
     assert provider.calls == []
     assert r.status == Status.ANSWERED
     assert r.citations[0].faithful is None  # left unverified
+
+
+def _incontext_kb():
+    return InContextKB([KBChunk(source="enc.md", text=_ENC, tags=["soc2"], tier=2)])
+
+
+def test_s1_incontext_strong_grounding_reaches_high():
+    """S1: a faithful, strongly-grounded (verbatim) in-context answer earns HIGH
+    even though there is no reranker."""
+    cfg = Config(llm_provider="mock", kb_mode="in_context", verify_faithfulness=True)
+    answer = ('[{"question_id":"q1","answer":"%s","answer_type":"yes_no",'
+              '"citations":[{"source":"enc.md","snippet":"%s"}],'
+              '"status":"answered","confidence":"low"}]' % (_ENC, _ENC))
+    faith = '[{"id":"q1","faithful":true,"unsupported_claims":[]}]'
+    provider = MockProvider(responses=[answer, faith])
+    q = [Question(id="q1", text="Do you encrypt data at rest?", answer_type=AnswerType.YES_NO)]
+    r = orchestrate(q, provider, AnswerLibrary([]), _incontext_kb(), cfg, scope_tags=["soc2"])[0]
+    assert r.status == Status.ANSWERED
+    assert r.grounding_score is not None and r.grounding_score >= 0.85
+    assert r.confidence == Confidence.HIGH
+
+
+def test_s1_incontext_weak_grounding_stays_medium():
+    """S1: faithful but weakly-grounded in-context answer stays MEDIUM."""
+    cfg = Config(llm_provider="mock", kb_mode="in_context", verify_faithfulness=True)
+    answer = ('[{"question_id":"q1","answer":"Yes.","answer_type":"yes_no",'
+              '"citations":[{"source":"enc.md","snippet":"encrypted using AES-256"}],'
+              '"status":"answered","confidence":"high"}]')
+    faith = '[{"id":"q1","faithful":true,"unsupported_claims":[]}]'
+    provider = MockProvider(responses=[answer, faith])
+    q = [Question(id="q1", text="Do you encrypt data at rest?", answer_type=AnswerType.YES_NO)]
+    r = orchestrate(q, provider, AnswerLibrary([]), _incontext_kb(), cfg, scope_tags=["soc2"])[0]
+    assert r.status == Status.ANSWERED
+    assert r.grounding_score is not None and r.grounding_score < 0.85
+    assert r.confidence == Confidence.MEDIUM
+
+
+def test_grounding_score_lexical():
+    assert grounding_score("foo bar baz", ["foo bar baz"]) >= 0.85
+    assert (grounding_score("Yes.", ["encrypted using AES-256"]) or 0) < 0.85
+    assert grounding_score("", ["x"]) is None
+    assert grounding_score("x", []) is None
 
 
 def test_confidence_rule():

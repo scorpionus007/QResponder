@@ -33,12 +33,48 @@ def test_eval_report_has_all_metric_keys():
     retention = next(r for r in report.items if "retention" in r.question.lower())
     assert retention.status == "needs_review"
 
-    # format_report renders the headline metrics.
+    # S2: score distribution + suggested threshold reported.
+    assert "answered" in report.score_distribution
+    assert "flagged" in report.score_distribution
+    # answered items carry a grounding score in in-context mode.
+    assert report.score_distribution["answered"] is not None
+
+    # format_report renders the headline metrics + score distribution.
     text = format_report(report)
     assert "Recall@" in text
     assert "faithfulness" in text
     assert "correctness" in text
     assert "calibrate" in text.lower()
+    assert "score distribution" in text.lower()
+    assert "suggested" in text.lower()
+
+
+def test_eval_threshold_is_config_driven():
+    """S2: strong-score threshold is read from config end-to-end (changing it
+    moves a borderline generated answer between MEDIUM and HIGH)."""
+    chunks = [KBChunk(source="enc.md", text="Data at rest is encrypted with AES-256.", tags=["soc2"], tier=2)]
+    from qresponder.kb.in_context import InContextKB
+    from qresponder.core.orchestrate import orchestrate
+    from qresponder.kb.library import AnswerLibrary
+    from qresponder.models import AnswerType, Confidence, Question
+
+    eid_answer = ('[{"question_id":"q1","answer":"Data at rest is encrypted with AES-256.",'
+                  '"answer_type":"yes_no","citations":[{"source":"enc.md",'
+                  '"snippet":"Data at rest is encrypted with AES-256."}],'
+                  '"status":"answered","confidence":"low"}]')
+    faith = '[{"id":"q1","faithful":true,"unsupported_claims":[]}]'
+    q = [Question(id="q1", text="Encrypt at rest?", answer_type=AnswerType.YES_NO)]
+    kb = InContextKB(chunks)
+
+    # Low threshold -> strong grounding -> HIGH.
+    cfg_low = Config(llm_provider="mock", kb_mode="in_context", strong_grounding_score=0.1)
+    r_low = orchestrate(q, MockProvider(responses=[eid_answer, faith]), AnswerLibrary([]), kb, cfg_low)[0]
+    assert r_low.confidence == Confidence.HIGH
+
+    # Impossibly high threshold -> never strong -> MEDIUM.
+    cfg_high = Config(llm_provider="mock", kb_mode="in_context", strong_grounding_score=1.1)
+    r_high = orchestrate(q, MockProvider(responses=[eid_answer, faith]), AnswerLibrary([]), kb, cfg_high)[0]
+    assert r_high.confidence == Confidence.MEDIUM
 
 
 class _StubEmbedder:

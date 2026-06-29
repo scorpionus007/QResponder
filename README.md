@@ -9,13 +9,14 @@ with any model: a local Llama/Qwen via Ollama/vLLM, or a cloud API. A security
 tool that demands you upload your security posture to someone's cloud is a
 contradiction — so QRESPONDER doesn't.
 
-> **Status:** Phase 0 (core loop) **+ Phase 1 (accuracy hardening)**. Ingest →
-> AI-extract questions → answer grounded from KB (+ approved Q&A) → cite +
-> faithfulness-verify + confidence + NEEDS_REVIEW → write output + review report.
-> Phase 1 adds hybrid retrieval (BM25 + dense + RRF) → cross-encoder rerank,
-> faithfulness/citation verification, and an eval harness. Two-adapter BYOM,
-> `doctor` preflight, CLI, Docker, mock-tested. Phase 2 (ambiguity, attachments,
-> format-perfect write-back, flywheel) follows.
+> **Status:** Phases 0–2 complete. Ingest → AI-extract → Tier-1 library →
+> retrieval/in-context answer → faithfulness-verify → confidence → NEEDS_REVIEW
+> → output + review. Phase 1 adds hybrid retrieval (BM25 + dense + RRF) →
+> cross-encoder rerank, faithfulness/citation verification, and an eval harness.
+> Phase 2 adds ambiguity/interpretation surfacing, attachment resolution from an
+> evidence vault, format-perfect write-back into the original template, and the
+> approve-back flywheel. Two-adapter BYOM, `doctor` preflight, CLI, Docker,
+> mock-tested (zero network).
 
 ## Why it's honest by construction
 
@@ -94,6 +95,13 @@ Models are configurable (`EMBEDDING_MODEL`, `RERANKER_MODEL`; `ms-marco-MiniLM-L
 is a good CPU/zero-cost reranker). The local path makes **zero external network
 calls** once models are cached.
 
+**Docker:** the default image (`docker build -t qresponder .`) supports
+in-context mode. For `--mode retrieval` in-container, build the retrieval image:
+
+```
+docker build --build-arg EXTRAS=anthropic,openai,retrieval -t qresponder:retrieval .
+```
+
 ## Faithfulness verification (Phase 1)
 
 Every *generated* `ANSWERED` result is checked that each factual claim is
@@ -104,10 +112,18 @@ human approval). Toggle with `VERIFY_FAITHFULNESS=true|false`. Confidence is
 explainable, never a fake percentage:
 
 - **HIGH** — Tier-1 approved-library reuse, *or* generated with faithfulness
-  passed **and** a strong rerank score.
-- **MEDIUM** — generated, answered, weaker/no retrieval signal.
+  passed **and** strong grounding. "Strongly grounded" means a strong
+  cross-encoder rerank score (retrieval mode) **or** a high answer↔cited-snippet
+  similarity (in-context mode) — so HIGH is reachable in **both** modes, never
+  blocked merely by the absence of a reranker.
+- **MEDIUM** — generated, answered, weak/uncertain grounding signal.
 - **LOW / NEEDS_REVIEW** — faithfulness failed, unsupported, ambiguous, weak
   retrieval, or parse error.
+
+The "strong" cutoff is reranker-dependent (some emit logits, some 0–1 sigmoids):
+tune `strong_rerank_score` (retrieval) and `strong_grounding_score` (in-context)
+via `qresponder eval`, which reports the score distribution for answered vs
+flagged items and a suggested threshold.
 
 ## Evaluate your model (Phase 1)
 
@@ -123,6 +139,51 @@ answer path and reports **Recall@K** (was the expected source retrieved),
 and **coverage** (% auto-answered vs % flagged, by reason). The correctness
 judge should be calibrated against a small human-graded baseline — judges
 hallucinate too.
+
+## Phase 2 — the differentiators
+
+**Ambiguity review.** ~1/3 of questionnaire items are ambiguous ("describe your
+encryption practices" = at rest / in transit / backups / endpoints). QRESPONDER
+never silently picks one reading: it drafts a grounded answer per interpretation
+and flags the item `NEEDS_REVIEW` / `ambiguous` with the candidates listed in
+`review.md` for you to choose.
+
+**Attachment resolution.** Point at an evidence vault and "attach your SOC 2
+report" resolves to the actual file:
+
+```
+qresponder answer -q f.xlsx --kb ./kb --evidence ./evidence   # or EVIDENCE_DIR
+```
+
+A clear winner (above a score floor and beating the runner-up by a margin) is
+set as the answer's attachment; otherwise the top candidates are listed for
+one-click confirmation. It never attaches a file below the margin without
+flagging.
+
+**Format-perfect write-back.** Fill answers into a *copy* of your original
+template (`<name>.answered.xlsx`/`.docx`), never the original:
+
+```
+qresponder answer -q f.xlsx --kb ./kb --writeback
+```
+
+It writes to the top-left cell of merged ranges, sets values only (preserving
+shared styles), and — because openpyxl can drop embedded images/charts on save —
+**falls back to the separate `answered.xlsx` rather than risk stripping your
+diagrams** when the workbook contains media. Only confident (ANSWERED) cells are
+filled; review items are left blank. The Phase-0/1 outputs (`answered.*`,
+`results.json`, `review.md`) are always produced as the safe artifact.
+
+**The flywheel.** Approve reviewed answers back into the Answer Library so Tier-1
+coverage compounds and accuracy climbs with use — independent of the model:
+
+```
+# after editing results.json during review:
+qresponder approve --results out/results.json --qa qa.yaml --by you --tags soc2
+```
+
+Accepted answers become versioned approved entries; re-approving the same
+question bumps its version and updates the answer instead of duplicating.
 
 ## Honest accuracy stance
 
@@ -140,9 +201,11 @@ accurate" are not identical; the architecture closes the gap. Use
 ```
 qresponder doctor
 qresponder answer --questionnaire f.xlsx --kb ./kb [--qa qa.yaml] [--tags hipaa,soc2]
-                  [--mode in_context|retrieval] [--out ./out] [--batch-size 12]
+                  [--mode in_context|retrieval] [--evidence ./evidence] [--writeback]
+                  [--out ./out] [--batch-size 12]
 qresponder extract --questionnaire f.xlsx        # debug: dump extracted questions
-qresponder eval --set eval.yaml                  # Phase 1
+qresponder eval --set eval.yaml [--kb ./kb] [--qa qa.yaml] [--mode retrieval]
+qresponder approve --results out/results.json --qa qa.yaml [--by NAME] [--tags ...]
 qresponder init                                  # scaffold .env / config / qa / eval
 ```
 
@@ -166,7 +229,7 @@ tag-scoped so GDPR questions don't pull SOC 2 evidence.
 - **Phase 1** — hybrid retrieval (BM25 + dense + RRF) → cross-encoder rerank;
   faithfulness/citation verification; tag-scoping; eval harness. ✅
 - **Phase 2** — ambiguity/interpretation surfacing; attachment resolution;
-  format-perfect write-back; hardened approved-answer flywheel.
+  format-perfect write-back; approved-answer flywheel. ✅
 - **Phase 3** — prior-submission mining + cross-source conflict detection; web
   UI; portal autofill; multi-tenant.
 

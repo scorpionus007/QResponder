@@ -50,6 +50,7 @@ class Config(BaseModel):
 
     # --- Knowledge base -----------------------------------------------------
     kb_mode: str = "in_context"  # in_context | retrieval
+    evidence_dir: str | None = None  # evidence vault for attachment resolution (C2)
 
     # --- Embeddings / reranker (Phase 1, local-first) -----------------------
     embedding_model: str = "all-MiniLM-L6-v2"
@@ -63,8 +64,12 @@ class Config(BaseModel):
     verify_faithfulness: bool = True
     batch_size: int = 12
     # Cross-encoder rerank score at/above which retrieval counts as "strong"
-    # for the confidence rule (§11). Tunable per reranker.
+    # for the confidence rule (§11). Reranker-dependent — tune via `eval`.
     strong_rerank_score: float = 0.0
+    # In-context mode has no reranker; instead a [0,1] grounding score (answer↔
+    # cited snippet similarity) gates HIGH. Default tuned so verbatim-grounded
+    # answers qualify and loosely-grounded ones stay MEDIUM.
+    strong_grounding_score: float = 0.85
 
     extra: dict = Field(default_factory=dict)
 
@@ -112,6 +117,7 @@ _ENV_MAP = {
     "LLM_API_KEY": "llm_api_key",
     "LLM_MODEL": "llm_model",
     "KB_MODE": "kb_mode",
+    "EVIDENCE_DIR": "evidence_dir",
     "EMBEDDING_MODEL": "embedding_model",
     "RERANKER_MODEL": "reranker_model",
     "TOP_N_RETRIEVE": "top_n_retrieve",

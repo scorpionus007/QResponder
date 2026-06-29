@@ -118,6 +118,7 @@ def run_eval(
             answer=result.answer,
             recall_hit=recall_hit,
             faithful=faithful,
+            grounding_score=result.grounding_score,
         )
         item_results.append(ir)
 
@@ -172,6 +173,8 @@ def run_eval(
         "by_reason": dict(by_reason),
     }
 
+    score_distribution, suggested_threshold = _score_distribution(item_results)
+
     return EvalReport(
         n_items=n,
         k=config.top_k_context,
@@ -179,9 +182,41 @@ def run_eval(
         faithfulness_rate=faithfulness_rate,
         correctness=correctness,
         coverage=coverage,
+        score_distribution=score_distribution,
+        suggested_threshold=suggested_threshold,
         items=item_results,
         note=_CALIBRATION_NOTE,
     )
+
+
+def _stats(scores: list[float]) -> dict | None:
+    if not scores:
+        return None
+    return {
+        "n": len(scores),
+        "min": round(min(scores), 3),
+        "mean": round(sum(scores) / len(scores), 3),
+        "max": round(max(scores), 3),
+    }
+
+
+def _score_distribution(items: list[EvalItemResult]):
+    """Grounding/rerank score spread for answered vs flagged, plus a suggested
+    threshold that best separates them (S2). Reranker-dependent — informational."""
+    answered = [r.grounding_score for r in items
+                if r.status == Status.ANSWERED.value and r.grounding_score is not None]
+    flagged = [r.grounding_score for r in items
+               if r.status != Status.ANSWERED.value and r.grounding_score is not None]
+    dist = {"answered": _stats(answered), "flagged": _stats(flagged)}
+    # Suggested threshold: midpoint between the answered floor and flagged ceiling
+    # when they separate cleanly; else the mean of answered scores.
+    suggested = None
+    if answered and flagged:
+        lo, hi = min(answered), max(flagged)
+        suggested = round((lo + hi) / 2, 3)
+    elif answered:
+        suggested = round(sum(answered) / len(answered), 3)
+    return dist, suggested
 
 
 def format_report(report: EvalReport) -> str:
@@ -203,5 +238,19 @@ def format_report(report: EvalReport) -> str:
         lines.append("  flagged by reason:")
         for reason, count in by_reason.items():
             lines.append(f"    - {reason}: {count}")
+
+    dist = report.score_distribution or {}
+    ans, flg = dist.get("answered"), dist.get("flagged")
+    if ans or flg:
+        lines.append("  grounding/rerank score distribution:")
+        if ans:
+            lines.append(f"    answered: min={ans['min']} mean={ans['mean']} max={ans['max']} (n={ans['n']})")
+        if flg:
+            lines.append(f"    flagged : min={flg['min']} mean={flg['mean']} max={flg['max']} (n={flg['n']})")
+        if report.suggested_threshold is not None:
+            lines.append(
+                f"  suggested strong-score threshold: {report.suggested_threshold} "
+                "(reranker-dependent; set strong_rerank_score / strong_grounding_score)"
+            )
     lines.append(f"  note: {report.note}")
     return "\n".join(lines)

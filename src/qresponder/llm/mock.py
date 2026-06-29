@@ -44,6 +44,28 @@ def _content_words(text: str) -> set[str]:
     return {w for w in words if len(w) > 3 and w not in _STOPWORDS}
 
 
+def _next_cell(location: str) -> str | None:
+    """Heuristic answer anchor for an xlsx-style 'Sheet!B3': the cell to the
+    right ('Sheet!C3'). Returns None for non-xlsx anchors."""
+    m = re.match(r"^(.*!)([A-Za-z]+)(\d+)$", location or "")
+    if not m:
+        return None
+    sheet, col, row = m.groups()
+    # Increment the column letters (single/multi-letter).
+    chars = list(col.upper())
+    i = len(chars) - 1
+    while i >= 0:
+        if chars[i] == "Z":
+            chars[i] = "A"
+            i -= 1
+            if i < 0:
+                chars.insert(0, "A")
+        else:
+            chars[i] = chr(ord(chars[i]) + 1)
+            break
+    return f"{sheet}{''.join(chars)}{row}"
+
+
 class MockProvider:
     def __init__(self, responses: list[str] | None = None):
         self._responses = list(responses or [])
@@ -69,8 +91,44 @@ class MockProvider:
             return self._mock_faithfulness(user)
         if system.startswith("You are grading answers"):
             return self._mock_correctness(user)
+        if system.startswith("A questionnaire item is ambiguous"):
+            return self._mock_interpretations(user)
         # doctor preflight uses a tiny JSON echo request.
         return '{"ok": true}'
+
+    # --- interpretations -------------------------------------------------
+    def _mock_interpretations(self, user: str) -> str:
+        """Draft one keyword-grounded answer per interpretation (same grounding
+        heuristic as _mock_answer)."""
+        kb_context, payload = self._split_answer_user(user)
+        kb_lower = kb_context.lower()
+        kb_lines = [ln.strip() for ln in kb_context.splitlines() if ln.strip()]
+        interps = []
+        if isinstance(payload, dict):
+            interps = payload.get("interpretations") or []
+        out = []
+        for interp in interps:
+            words = _content_words(str(interp))
+            overlap = {w for w in words if w in kb_lower}
+            if len(overlap) >= 2:
+                snippet = next(
+                    (ln for ln in kb_lines if any(w in ln.lower() for w in overlap)),
+                    kb_lines[0] if kb_lines else "",
+                )
+                out.append({
+                    "interpretation": interp,
+                    "answer": f"For '{interp}': {snippet}",
+                    "citations": [{"source": "knowledge-base", "snippet": snippet}],
+                    "status": "answered",
+                })
+            else:
+                out.append({
+                    "interpretation": interp,
+                    "answer": "",
+                    "citations": [],
+                    "status": "needs_review",
+                })
+        return json.dumps(out)
 
     # --- eval correctness ------------------------------------------------
     def _mock_correctness(self, user: str) -> str:
@@ -160,6 +218,7 @@ class MockProvider:
                     "answer_type": _answer_type(text),
                     "section": current_section,
                     "location_hint": location,
+                    "answer_location_hint": _next_cell(location),
                     "ambiguous": False,
                     "interpretations": [],
                 }

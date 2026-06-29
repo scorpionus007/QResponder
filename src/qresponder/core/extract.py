@@ -36,6 +36,7 @@ def _coerce_question(raw: dict, index: int) -> Question | None:
         answer_type=AnswerType(atype),
         section=(raw.get("section") or None),
         location_hint=(raw.get("location_hint") or None),
+        answer_location_hint=(raw.get("answer_location_hint") or None),
         ambiguous=bool(raw.get("ambiguous", False)),
         interpretations=[str(x) for x in interps],
     )

@@ -7,13 +7,34 @@
 
 services:
   app:
-    build: .
+    build:
+      context: .
+      # Default image: in-context mode + both provider SDKs.
+      # For `--mode retrieval` inside the container, build the retrieval image:
+      #   args:
+      #     EXTRAS: anthropic,openai,retrieval
+      args:
+        EXTRAS: anthropic,openai
     image: qresponder:latest
     env_file:
       - .env
     volumes:
       - ./:/data           # mount your questionnaires, kb, qa.yaml, output here
     working_dir: /data
+
+  # Retrieval-capable profile (opt-in): builds with the retrieval extra so
+  # `qresponder answer --mode retrieval` works in-container.
+  #   docker compose --profile retrieval run --rm app-retrieval doctor --retrieval
+  # app-retrieval:
+  #   build:
+  #     context: .
+  #     args:
+  #       EXTRAS: anthropic,openai,retrieval
+  #   image: qresponder:retrieval
+  #   profiles: ["retrieval"]
+  #   env_file: [.env]
+  #   volumes: ["./:/data"]
+  #   working_dir: /data
     # Local path example (uncomment with the ollama service below):
     # environment:
     #   LLM_PROVIDER: openai_compat

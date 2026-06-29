@@ -25,6 +25,33 @@ def is_strong_retrieval(retrieval_score: float | None, threshold: float = DEFAUL
     return retrieval_score is not None and retrieval_score >= threshold
 
 
+def grounding_score(answer: str, snippets: list[str], embedder=None) -> float | None:
+    """Max similarity between the answer and its cited snippets (S1).
+
+    This is the in-context-mode stand-in for a rerank score: a legitimate
+    grounding signal so a faithful, strongly-grounded in-context answer can earn
+    HIGH (instead of being capped at MEDIUM by the mere absence of a reranker).
+    Uses the local embedder (cosine) when available, else token overlap — both
+    offline, no external calls.
+    """
+    snippets = [s for s in (snippets or []) if s]
+    if not answer or not snippets:
+        return None
+    if embedder is not None:
+        try:
+            import numpy as np
+
+            vecs = np.asarray(embedder.embed([answer, *snippets]), dtype=float)
+            a = vecs[0]
+            sims = [float(a @ vecs[i]) for i in range(1, len(vecs))]
+            return max(sims) if sims else None
+        except Exception:  # noqa: BLE001 - fall back to lexical
+            pass
+    from ..kb.base import lexical_similarity
+
+    return max(lexical_similarity(answer, s) for s in snippets)
+
+
 def decide_confidence(
     *,
     source_tier: int | None,

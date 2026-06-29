@@ -47,8 +47,10 @@ class Question(BaseModel):
     text: str
     answer_type: AnswerType = AnswerType.UNKNOWN
     section: str | None = None
-    location_hint: str | None = None  # "Sheet1!C7" — write-back anchor (Phase 2)
-    # Populated when ambiguous (Phase 2); kept here so the seam exists from day one.
+    location_hint: str | None = None  # "Sheet1!C7" — the QUESTION's cell anchor
+    # Where the ANSWER goes (distinct from location_hint), for write-back (C3).
+    answer_location_hint: str | None = None
+    # Populated when ambiguous; the extractor proposes readings, the human picks.
     interpretations: list[str] = Field(default_factory=list)
     ambiguous: bool = False
 
@@ -58,6 +60,15 @@ class Citation(BaseModel):
     snippet: str
     # Set by the faithfulness check (Phase 1+); None means "not yet verified".
     faithful: bool | None = None
+
+
+class InterpretationOption(BaseModel):
+    """One reading of an ambiguous question with its own grounded draft (C1, §8)."""
+
+    interpretation: str
+    answer: str
+    citations: list[Citation] = Field(default_factory=list)
+    status: Status = Status.NEEDS_REVIEW
 
 
 class AnswerResult(BaseModel):
@@ -70,8 +81,16 @@ class AnswerResult(BaseModel):
     status: Status
     review_reason: ReviewReason = ReviewReason.NONE
     missing_info: str | None = None
-    attachment_path: str | None = None  # resolved attachment, if any (Phase 2)
+    attachment_path: str | None = None  # resolved attachment, if any (C2)
+    attachment_candidates: list[str] = Field(default_factory=list)  # unresolved options (C2)
     source_tier: int | None = None  # 1=Library .. 3=Evidence
+    # Interpretation candidates for ambiguous questions (C1).
+    candidates: list[InterpretationOption] = Field(default_factory=list)
+    # Explainable grounding/rerank score behind the confidence decision (S1/S2).
+    grounding_score: float | None = None
+    # Write-back anchors carried from the Question for format-perfect output (C3).
+    location_hint: str | None = None
+    answer_location_hint: str | None = None
 
 
 class QuestionnaireResult(BaseModel):

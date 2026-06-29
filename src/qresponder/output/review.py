@@ -54,6 +54,21 @@ def build_review_md(result: QuestionnaireResult) -> str:
                 lines.append(f"- **{r.question_text}**")
                 if r.missing_info:
                     lines.append(f"  - Missing: {r.missing_info}")
+                # Ambiguous: show each interpretation's draft so the human picks.
+                for opt in r.candidates:
+                    lines.append(f"  - _Interpretation:_ {opt.interpretation}")
+                    if opt.answer:
+                        lines.append(f"    - Draft: {opt.answer}")
+                    for c in opt.citations:
+                        snip = c.snippet if len(c.snippet) <= 160 else c.snippet[:157] + "..."
+                        lines.append(f"    - cite [{c.source}]: {snip}")
+                    if not opt.answer:
+                        lines.append("    - (no supported answer for this reading)")
+                # Attachment candidates (C2) when unresolved.
+                if r.attachment_candidates:
+                    lines.append(f"  - Candidate files: {', '.join(r.attachment_candidates)}")
+                if r.attachment_path:
+                    lines.append(f"  - Resolved attachment: {r.attachment_path}")
             lines.append("")
 
     # 2. Low-confidence answered.
