@@ -348,6 +348,8 @@ qresponder answer --questionnaire f.xlsx --kb ./kb [--qa qa.yaml] [--tags hipaa,
                   [--out ./out] [--batch-size 12]
 qresponder answer --batch ./inbox --kb ./kb --out ./out   # many files → per-file outputs + ZIP
 qresponder audit --run ./out [--zip]                       # export the evidence pack
+qresponder export-flagged --run ./out --out flagged.csv [--by-owner]   # send to an SME
+qresponder import-answers --csv flagged.csv --qa qa.yaml [--run ./out]  # filled CSV → library + run
 qresponder extract --questionnaire f.xlsx        # debug: dump extracted questions
 qresponder eval --set eval.yaml [--kb ./kb] [--qa qa.yaml] [--mode retrieval]
 qresponder approve --results out/results.json --qa qa.yaml [--by NAME] [--tags ...]

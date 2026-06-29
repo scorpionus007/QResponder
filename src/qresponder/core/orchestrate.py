@@ -118,6 +118,24 @@ def _payload(q: Question) -> dict:
     }
 
 
+def _cluster_questions(questions: list[Question], threshold: float) -> list[list[Question]]:
+    """Greedily group near-duplicate questions (Part E). First member is the
+    canonical; the rest reuse its answer. Within-doc consistency + fewer calls."""
+    from ..kb.base import lexical_similarity
+
+    clusters: list[list[Question]] = []
+    for q in questions:
+        placed = False
+        for cl in clusters:
+            if lexical_similarity(q.text, cl[0].text) >= threshold:
+                cl.append(q)
+                placed = True
+                break
+        if not placed:
+            clusters.append([q])
+    return clusters
+
+
 def orchestrate(
     questions: list[Question],
     provider: LLMProvider,
@@ -186,6 +204,15 @@ def orchestrate(
         results[q.id] = _ambiguous_result(q, candidates)
         n_ambig += 1
 
+    # Duplicate grouping (Part E): only the canonical of each near-duplicate
+    # cluster is answered; members reuse its result with a shared group_id.
+    if getattr(config, "dedup_questions", True):
+        clusters = _cluster_questions(to_generate, getattr(config, "dedup_threshold", 0.9))
+    else:
+        clusters = [[q] for q in to_generate]
+    cluster_of = {cl[0].id: cl for cl in clusters}
+    to_generate = [cl[0] for cl in clusters]  # canonicals only
+
     generated: list[AnswerResult] = []
     if retrieval_mode:
         # Per-question retrieval: each question gets its own reranked top-k
@@ -248,9 +275,46 @@ def orchestrate(
             ),
         )
 
+    # Expand duplicate clusters (Part E): copy each canonical's result onto its
+    # near-duplicate members with a shared group_id (answered once, applied to all).
+    n_grouped = 0
+    for canonical_id, cluster in cluster_of.items():
+        if len(cluster) <= 1 or canonical_id not in results:
+            continue
+        base = results[canonical_id]
+        base.group_id = canonical_id
+        for member in cluster[1:]:
+            mr = base.model_copy(deep=True)
+            mr.question_id = member.id
+            mr.question_text = member.text
+            mr.location_hint = member.location_hint
+            mr.answer_location_hint = member.answer_location_hint
+            mr.group_id = canonical_id
+            results[member.id] = mr
+            n_grouped += 1
+
     # Cross-source conflict detection (D1): compare answered results against the
     # Library and each other; flag clear contradictions for human reconciliation.
     detect_conflicts(list(results.values()), library, provider, config)
+
+    # SME routing (Part E): assign an owner to flagged items by tag/category
+    # match (metadata only — no email/send). Owner tag matched against the run's
+    # scope tags or the question's section/text.
+    owners = {str(k).lower(): v for k, v in (getattr(config, "owners", {}) or {}).items()}
+    if owners:
+        scope_lower = {t.lower() for t in (scope_tags or [])}
+        qmap = {q.id: q for q in questions}
+        for r in results.values():
+            if r.status != Status.NEEDS_REVIEW:
+                continue
+            q = qmap.get(r.question_id)
+            haystack = (r.question_text or "").lower()
+            if q is not None and q.section:
+                haystack += " " + q.section.lower()
+            for tag, who in owners.items():
+                if tag in scope_lower or tag in haystack:
+                    r.owner = who
+                    break
 
     # Ensure every result (Tier-1 reuse, attachments, ambiguous) carries an audit
     # trail for the evidence pack — capture, not new logic.

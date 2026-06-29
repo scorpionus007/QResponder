@@ -41,6 +41,20 @@ def build_review_md(result: QuestionnaireResult) -> str:
     lines.append("> This is a **draft**. Nothing is submitted. Review the items below first.")
     lines.append("")
 
+    # Duplicate groups (Part E): answered once, applied to all members.
+    groups = defaultdict(list)
+    for r in result.results:
+        if r.group_id:
+            groups[r.group_id].append(r)
+    multi = {g: rs for g, rs in groups.items() if len(rs) > 1}
+    if multi:
+        lines.append(f"**Duplicate grouping:** {len(multi)} group(s) — "
+                     f"answered once and applied to all members:")
+        for rs in multi.values():
+            canonical = next((r for r in rs if r.question_id == r.group_id), rs[0])
+            lines.append(f"- _{canonical.question_text}_ → applied to **{len(rs)}** questions")
+        lines.append("")
+
     # 1. Needs review, grouped by reason.
     if needs_review:
         grouped: dict[ReviewReason, list] = defaultdict(list)

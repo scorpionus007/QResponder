@@ -253,6 +253,49 @@ def audit(
         typer.echo(f"  zip:        {bundle_zip(run)}")
 
 
+@app.command(name="export-flagged")
+def export_flagged_cmd(
+    run: str = typer.Option(..., "--run", help="Run dir containing results.json"),
+    out: str = typer.Option("flagged.csv", "--out", help="Output CSV path"),
+    by_owner: bool = typer.Option(False, "--by-owner", help="Split into per-owner CSVs"),
+):
+    """Export flagged items to CSV for an SME to fill (category,question,answer,reason)."""
+    from .core.csvio import export_flagged
+    from .models import QuestionnaireResult
+
+    result = QuestionnaireResult.model_validate_json(
+        (Path(run) / "results.json").read_text(encoding="utf-8"))
+    paths = export_flagged(result, out, by_owner=by_owner)
+    typer.secho(f"Wrote {len(paths)} CSV(s):", fg=typer.colors.GREEN)
+    for p in paths:
+        typer.echo(f"  {p}")
+
+
+@app.command(name="import-answers")
+def import_answers_cmd(
+    csv_path: str = typer.Option(..., "--csv", help="Filled flagged CSV"),
+    qa: str = typer.Option(..., "--qa", help="Answer Library to grow"),
+    run: str = typer.Option(None, "--run", help="Run dir whose results.json to update"),
+    by: str = typer.Option("csv-import", "--by", help="Approver name"),
+):
+    """Import filled CSV answers: train the library + flip the run's items to ANSWERED."""
+    from .core.csvio import import_answers
+    from .models import QuestionnaireResult
+
+    result = None
+    rp = None
+    if run:
+        rp = Path(run) / "results.json"
+        result = QuestionnaireResult.model_validate_json(rp.read_text(encoding="utf-8"))
+    stats = import_answers(csv_path, qa, result=result, approved_by=by)
+    if result is not None and rp is not None:
+        rp.write_text(result.model_dump_json(indent=2), encoding="utf-8")
+    typer.secho(
+        f"Imported {stats['imported']} answer(s); re-synced {stats['resynced']} "
+        "still-flagged item(s) against the updated library.", fg=typer.colors.GREEN,
+    )
+
+
 @app.command()
 def serve(
     host: str = typer.Option("127.0.0.1", "--host", help="Bind address (default localhost)"),

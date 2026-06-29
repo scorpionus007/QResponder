@@ -66,6 +66,12 @@ class Config(BaseModel):
     max_kb_chars: int = 150_000
     verify_faithfulness: bool = True
     batch_size: int = 12
+    # Duplicate-question grouping (Part E): answer the canonical once, apply to
+    # near-duplicates within a run.
+    dedup_questions: bool = True
+    dedup_threshold: float = 0.9
+    # SME routing (Part E): map of tag -> owner for flagged items.
+    owners: dict = {}
     # Cross-source conflict detection (D1).
     detect_conflicts: bool = True
     conflict_use_judge: bool = True       # LLM-judge for nuanced (non-heuristic) pairs
