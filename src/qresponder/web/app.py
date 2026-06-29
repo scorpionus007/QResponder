@@ -67,6 +67,8 @@ class _Job:
         self.approved: dict[str, str] = {}  # qid -> approved text (idempotent re-accept)
         self.history: list = []           # prior submissions (G1)
         self.history_path: str | None = None  # where to append on export
+        self.preset: str | None = None    # answer-style preset name (Phase 7 A)
+        self.style: str | None = None     # resolved preset instructions
 
 
 class AcceptBody(BaseModel):
@@ -112,6 +114,7 @@ def create_app(config: Config | None = None) -> FastAPI:
             result = run_pipeline(
                 job.questionnaire_path, kb, qa, cfg,
                 scope_tags=job.tags, evidence_dir=evidence, history=job.history,
+                preset=job.preset, style=job.style,
             )
             job.result = result
             _persist(job)
@@ -122,12 +125,15 @@ def create_app(config: Config | None = None) -> FastAPI:
             job.status = "error"
 
     def _start_job(out_dir: Path, qa_path: str, tags, questionnaire: UploadFile,
-                   data: bytes, kb, evidence, cfg: Config, history=None, history_path=None) -> str:
+                   data: bytes, kb, evidence, cfg: Config, history=None, history_path=None,
+                   preset=None, style=None) -> str:
         run_id = uuid.uuid4().hex[:12]
         out_dir.mkdir(parents=True, exist_ok=True)
         job = _Job(run_id, out_dir, qa_path, normalize_tags(tags))
         job.history = history or []
         job.history_path = history_path
+        job.preset = preset
+        job.style = style
         dest = out_dir / _safe_filename(questionnaire.filename or "questionnaire")
         dest.write_bytes(data)
         job.questionnaire_path = str(dest)
@@ -339,10 +345,30 @@ def create_app(config: Config | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc))
         return {"settings": settings}
 
+    # ---- answer-style presets (Phase 7 A) ---------------------------------
+    @app.get("/api/workspaces/{wid}/presets")
+    def list_presets(wid: str):
+        from ..core.presets import BUILTIN_PRESETS, load_workspace_presets
+
+        ws = _ws(wid)
+        return {"builtin": BUILTIN_PRESETS, "custom": load_workspace_presets(ws.path)}
+
+    @app.post("/api/workspaces/{wid}/presets")
+    def add_preset(wid: str, body: dict = Body(...)):
+        from ..core.presets import load_workspace_presets, save_workspace_preset
+
+        ws = _ws(wid)
+        name = str(body.get("name", "")).strip()
+        instructions = str(body.get("instructions", "")).strip()
+        if not name or not instructions:
+            raise HTTPException(status_code=400, detail="name and instructions are required")
+        save_workspace_preset(ws.path, name, instructions)
+        return {"custom": load_workspace_presets(ws.path)}
+
     # ---- workspace runs ----------------------------------------------------
     @app.post("/api/workspaces/{wid}/runs")
     async def create_ws_run(wid: str, questionnaire: UploadFile, mode: str = Form(None),
-                            tags: str = Form(None)):
+                            tags: str = Form(None), preset: str = Form(None)):
         ws = _ws(wid)
         cfg = ws.effective_config(config)
         if mode:
@@ -351,12 +377,16 @@ def create_app(config: Config | None = None) -> FastAPI:
         out_dir = ws.runs_dir / uuid.uuid4().hex[:12]
         data = await questionnaire.read()
         from ..core.history import HistoryStore
+        from ..core.presets import resolve as resolve_preset
 
+        preset_name = preset or ws.load_settings().get("preset")
+        style = resolve_preset(preset_name, ws.path)
         hist_path = ws.path / "history.yaml"
         run_id = _start_job(
             out_dir, str(ws.qa_path), scope, questionnaire, data,
             str(ws.kb_dir), str(ws.evidence_dir), cfg,
             history=HistoryStore(hist_path).load(), history_path=str(hist_path),
+            preset=preset_name if style else None, style=style,
         )
         return {"run_id": run_id, "workspace": wid}
 

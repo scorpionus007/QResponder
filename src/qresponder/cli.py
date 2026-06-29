@@ -86,6 +86,10 @@ def answer(
     writeback: bool = typer.Option(
         False, "--writeback", help="Also fill answers into a copy of the original file"
     ),
+    preset: str = typer.Option(None, "--preset", help="Answer-style preset: concise|detailed|formal|<custom>"),
+    review_markers: bool = typer.Option(
+        True, "--review-markers/--no-review-markers", help="Mark NEEDS_REVIEW cells visibly (default on)"
+    ),
     config_path: str = typer.Option("config.yaml", "--config"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ):
@@ -136,7 +140,13 @@ def answer(
         typer.secho("Provide --questionnaire <file> or --batch <dir|glob>.", fg=typer.colors.RED)
         raise typer.Exit(code=1)
 
-    result = run_pipeline(questionnaire, kb, qa, cfg, scope_tags=scope, evidence_dir=evidence)
+    from .core.presets import resolve as resolve_preset
+
+    style = resolve_preset(preset)
+    if preset and style is None:
+        typer.secho(f"Unknown preset '{preset}'; using default style.", fg=typer.colors.YELLOW)
+    result = run_pipeline(questionnaire, kb, qa, cfg, scope_tags=scope, evidence_dir=evidence,
+                          preset=preset if style else None, style=style)
     # Always emit the safe Phase-0/1 artifacts.
     paths = write_all(result, out)
 

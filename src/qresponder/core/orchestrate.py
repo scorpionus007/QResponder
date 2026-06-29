@@ -171,6 +171,8 @@ def orchestrate(
     scope_tags=None,
     evidence=None,
     history=None,
+    preset: str | None = None,
+    style: str | None = None,
 ) -> list[AnswerResult]:
     from ..models import AuditTrail, RetrievedCandidate
     from .confidence import confidence_rationale, decide_confidence, grounding_score
@@ -236,7 +238,7 @@ def orchestrate(
     # Ambiguous questions: draft one grounded answer per interpretation (C1).
     for q in ambiguous_questions:
         ctx, _ = ctx_for(q)
-        candidates = answer_interpretations(provider, q.text, q.interpretations, ctx)
+        candidates = answer_interpretations(provider, q.text, q.interpretations, ctx, style=style)
         results[q.id] = _ambiguous_result(q, candidates)
         n_ambig += 1
 
@@ -251,7 +253,7 @@ def orchestrate(
         if is_compound(q.text):
             ctx, _ = ctx_for(q)
             parts = split_parts(q.text)
-            options = answer_interpretations(provider, q.text, parts, ctx)
+            options = answer_interpretations(provider, q.text, parts, ctx, style=style)
             results[q.id] = _compound_result(q, options)
             n_compound += 1
         else:
@@ -279,7 +281,7 @@ def orchestrate(
                 RetrievedCandidate(source=c.source, snippet=c.text, score=round(float(s), 4))
                 for c, s in hits
             ]
-            for r in answer_batch(provider, ctx, [_payload(q)]):
+            for r in answer_batch(provider, ctx, [_payload(q)], style=style):
                 results[r.question_id] = r
                 generated.append(r)
     else:
@@ -287,7 +289,7 @@ def orchestrate(
         batch_size = max(1, config.batch_size)
         for i in range(0, len(to_generate), batch_size):
             batch = to_generate[i : i + batch_size]
-            for r in answer_batch(provider, shared_ctx, [_payload(q) for q in batch]):
+            for r in answer_batch(provider, shared_ctx, [_payload(q) for q in batch], style=style):
                 results[r.question_id] = r
                 generated.append(r)
                 retrieval_score.setdefault(r.question_id, None)
@@ -327,6 +329,7 @@ def orchestrate(
                 confidence=r.confidence, source_tier=r.source_tier,
                 faithful=faithful, retrieval_score=score, strong_threshold=threshold,
             ),
+            preset=preset,
         )
 
     # Expand duplicate clusters (Part E): copy each canonical's result onto its
@@ -386,6 +389,7 @@ def orchestrate(
                     confidence=r.confidence, source_tier=r.source_tier,
                     faithful=(r.source_tier == 1), retrieval_score=r.grounding_score,
                 ),
+                preset=preset,
             )
 
     # SafeRAG (Part C): scan the question and the retrieved/cited content for

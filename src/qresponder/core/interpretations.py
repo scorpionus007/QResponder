@@ -26,15 +26,17 @@ def answer_interpretations(
     question_text: str,
     interpretations: list[str],
     kb_context: str,
+    style: str | None = None,
 ) -> list[InterpretationOption]:
     """Draft one grounded answer per interpretation (single batched call)."""
     if not interpretations:
         return []
     user = prompts.build_interpretations_user(question_text, interpretations, kb_context)
+    system = prompts.INTERPRETATIONS_SYSTEM + prompts.style_block(style)
 
     raw_items = None
     for _ in range(2):
-        text = provider.complete(prompts.INTERPRETATIONS_SYSTEM, user, max_tokens=4096)
+        text = provider.complete(system, user, max_tokens=4096)
         try:
             raw_items = parse_json_array(text)
             break

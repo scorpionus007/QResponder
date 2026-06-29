@@ -120,11 +120,15 @@ def answer_batch(
     provider: LLMProvider,
     kb_context: str,
     questions: list[dict],
+    style: str | None = None,
 ) -> list[AnswerResult]:
-    """Answer one batch of questions against the assembled KB context."""
+    """Answer one batch of questions against the assembled KB context.
+
+    `style` is a workspace preset's STYLE/FORMAT instructions; it is appended to
+    the system prompt subordinate to the grounding rules and cannot relax them."""
     if not questions:
         return []
-    system = prompts.ANSWER_SYSTEM
+    system = prompts.build_answer_system(style)
     user = prompts.build_answer_user(kb_context, questions)
 
     raw_items = None

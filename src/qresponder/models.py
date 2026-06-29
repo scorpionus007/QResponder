@@ -107,6 +107,8 @@ class AuditTrail(BaseModel):
     human_action: HumanAction = Field(default_factory=HumanAction)
     # Prompt-injection scan result (Part C): {detected: bool, markers: [...], where}.
     safety: dict = Field(default_factory=dict)
+    # Answer-style preset used (Phase 7 Part A), for the evidence pack.
+    preset: str | None = None
 
 
 class AnswerResult(BaseModel):

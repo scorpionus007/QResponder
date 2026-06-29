@@ -7,6 +7,11 @@ versioning.
 ## [Unreleased]
 
 ### Added
+- **Competitor-parity phase (Phase 7).**
+  - **Answer-style presets** — built-in `concise`/`detailed`/`formal` + custom
+    per-workspace presets; `--preset` / run form / workspace default. Style-only:
+    subordinate to grounding (can't fabricate or drop citations); recorded in the
+    audit trail.
 - **Provably-superior phase (A–G).**
   - **A — Provable accuracy:** RAGAS-aligned eval (faithfulness, answer relevancy,
     context precision/recall, correctness) + retrieval Recall@K/MRR, a calibration

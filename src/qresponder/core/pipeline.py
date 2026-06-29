@@ -29,6 +29,8 @@ def run_pipeline(
     provider: LLMProvider | None = None,
     evidence_dir: str | None = None,
     history=None,
+    preset: str | None = None,
+    style: str | None = None,
 ) -> QuestionnaireResult:
     provider = provider or make_provider(config)
 
@@ -58,6 +60,7 @@ def run_pipeline(
     results = orchestrate(
         questions, provider, library, kb, config,
         scope_tags=scope_tags, evidence=evidence, history=history,
+        preset=preset, style=style,
     )
 
     answered = sum(1 for r in results if r.status == Status.ANSWERED)

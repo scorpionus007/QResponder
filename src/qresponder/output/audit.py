@@ -72,6 +72,8 @@ def build_audit_md(result: QuestionnaireResult) -> str:
                          + (f" — {fa.get('reason')}" if fa.get("reason") else ""))
             if a.confidence_rationale:
                 lines.append(f"- **Confidence rationale:** {a.confidence_rationale}")
+            if a.preset:
+                lines.append(f"- **Answer style:** {a.preset}")
             ha = a.human_action
             if ha and ha.type and ha.type != "none":
                 who = f" by {ha.by}" if ha.by else ""

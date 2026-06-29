@@ -86,7 +86,10 @@ class MockProvider:
         if system.startswith("You extract questions"):
             return self._mock_extract(user)
         if system.startswith("Answer STRICTLY"):
-            return self._mock_answer(user)
+            # Style-aware ONLY for length/tone — never for whether to answer.
+            slow = system.lower()
+            style = "detailed" if "detailed" in slow else "concise" if "concise" in slow else None
+            return self._mock_answer(user, style=style)
         if system.startswith("You are a strict faithfulness verifier"):
             return self._mock_faithfulness(user)
         if system.startswith("You are grading answers"):
@@ -241,7 +244,7 @@ class MockProvider:
         return json.dumps(items)
 
     # --- answering -------------------------------------------------------
-    def _mock_answer(self, user: str) -> str:
+    def _mock_answer(self, user: str, style: str | None = None) -> str:
         kb_context, questions = self._split_answer_user(user)
         kb_lower = kb_context.lower()
         kb_lines = [ln.strip() for ln in kb_context.splitlines() if ln.strip()]
@@ -274,10 +277,21 @@ class MockProvider:
                     (ln for ln in kb_lines if any(w in ln.lower() for w in overlap)),
                     kb_lines[0] if kb_lines else "",
                 )
+                # Style affects ONLY length/tone of a SUPPORTED answer — never
+                # whether to answer, and the citation is always present. The
+                # "detailed" variant restates the SAME grounded fact at greater
+                # length (it adds no claims beyond the snippet, so it stays
+                # faithful).
+                if style == "detailed":
+                    answer = f"Based on the knowledge base: {snippet} In detail: {snippet}"
+                elif style == "concise":
+                    answer = snippet
+                else:
+                    answer = f"Based on the knowledge base: {snippet}"
                 out.append(
                     {
                         "question_id": qid,
-                        "answer": f"Based on the knowledge base: {snippet}",
+                        "answer": answer,
                         "answer_type": atype,
                         "citations": [{"source": "knowledge-base", "snippet": snippet}],
                         "confidence": "medium",

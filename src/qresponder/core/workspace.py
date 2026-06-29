@@ -36,6 +36,9 @@ ALLOWED_SETTINGS = {
     "rrf_k",
     "max_kb_chars",
 }
+# Workspace-only settings (not engine Config fields): stored in settings.yaml and
+# read directly, never pushed into the global Config.
+WORKSPACE_ONLY_SETTINGS = {"tags", "preset", "review_markers"}
 # Never settable through a workspace (would leak/override credentials).
 FORBIDDEN_SETTINGS = {
     "llm_provider",
@@ -103,7 +106,7 @@ class Workspace(BaseModel):
         Provider/key always stay from global — never overridden here."""
         cfg = global_config.model_copy()
         for key, value in self.load_settings().items():
-            if key in ALLOWED_SETTINGS:
+            if key in ALLOWED_SETTINGS and hasattr(cfg, key):
                 setattr(cfg, key, value)
         return cfg
 
@@ -177,7 +180,7 @@ class WorkspaceStore:
             )
         settings = ws.load_settings()
         for key, value in updates.items():
-            if key in ALLOWED_SETTINGS or key == "tags":
+            if key in ALLOWED_SETTINGS or key in WORKSPACE_ONLY_SETTINGS:
                 settings[key] = value
             else:
                 raise WorkspaceError(f"Unknown setting '{key}'.")
