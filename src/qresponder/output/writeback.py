@@ -103,6 +103,41 @@ def _resolve_xlsx_target(wb, r):
     return None
 
 
+def _list_options(formula1: str) -> list[str]:
+    """Parse a list data-validation's options from formula1 (e.g. '"Yes,No"')."""
+    if not formula1:
+        return []
+    f = formula1.strip()
+    if f.startswith('"') and f.endswith('"'):
+        f = f[1:-1]
+    return [o.strip() for o in f.split(",") if o.strip()]
+
+
+def _coerce_to_validation(ws, coord: str, value: str) -> str:
+    """If `coord` has a list dropdown validation and `value` isn't an allowed
+    option, map it to one (e.g. 'Yes. ...' -> 'Yes'); else return value unchanged.
+    Never modifies the validation object."""
+    try:
+        for dv in ws.data_validations.dataValidation:
+            if dv.type != "list" or coord not in dv.sqref:
+                continue
+            options = _list_options(dv.formula1 or "")
+            if not options or value in options:
+                return value
+            vlow = value.lower()
+            # Prefer a word-boundary-ish match (yes/no), else substring.
+            for opt in options:
+                if vlow == opt.lower() or vlow.startswith(opt.lower()):
+                    return opt
+            for opt in options:
+                if opt.lower() in vlow:
+                    return opt
+            return value
+    except Exception:  # noqa: BLE001 - never let validation handling break write-back
+        return value
+    return value
+
+
 def _writeback_xlsx(result: QuestionnaireResult, original_path: Path, out_path: Path) -> dict:
     import openpyxl
     from openpyxl.cell.cell import MergedCell
@@ -130,7 +165,12 @@ def _writeback_xlsx(result: QuestionnaireResult, original_path: Path, out_path: 
         cell = ws[coord]
         if isinstance(cell, MergedCell):  # defensive: anchor resolution failed
             continue
-        cell.value = value  # set value only; never touch the (shared) style
+        # If the cell has a list/dropdown data-validation, write an ALLOWED value
+        # when we can map to one — and never touch the validation object itself
+        # (openpyxl preserves data validations across load/save; we only set the
+        # value, so dropdowns/validations survive — Part F).
+        value = _coerce_to_validation(ws, coord, value)
+        cell.value = value  # set value only; never touch the (shared) style/validation
         written += 1
 
     wb.save(out_path)

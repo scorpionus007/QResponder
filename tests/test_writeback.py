@@ -145,6 +145,60 @@ def test_writeback_never_overwrites_filled_response_cell(tmp_path):
     assert out_ws["C2"].value == "Yes, AES-256."
 
 
+def test_writeback_preserves_data_validation_dropdown(tmp_path):
+    """Part F: a dropdown / data-validation answer cell keeps its validation
+    after write-back, and the written value lands in the cell."""
+    from openpyxl.worksheet.datavalidation import DataValidation
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Q"
+    ws["A1"] = "Question"
+    ws["B1"] = "Response"
+    ws["A2"] = "Do you encrypt at rest?"
+    dv = DataValidation(type="list", formula1='"Yes,No"', allow_blank=True)
+    ws.add_data_validation(dv)
+    dv.add("B2")  # dropdown on the answer cell
+    orig = tmp_path / "q.xlsx"
+    wb.save(orig)
+
+    result = QuestionnaireResult(
+        source_file=str(orig),
+        results=[_answered("q1", "Do you encrypt at rest?", "Yes", "Q!B2")],
+    )
+    info = write_back(result, str(orig), str(tmp_path / "out"))
+    out_wb = openpyxl.load_workbook(info["written"])
+    out_ws = out_wb["Q"]
+    assert out_ws["B2"].value == "Yes"
+    # The data validation survived the round-trip.
+    sqrefs = " ".join(str(d.sqref) for d in out_ws.data_validations.dataValidation)
+    assert "B2" in sqrefs
+    assert any(d.type == "list" for d in out_ws.data_validations.dataValidation)
+
+
+def test_writeback_coerces_to_dropdown_option(tmp_path):
+    """Part F: a verbose yes/no answer is coerced to the dropdown's allowed value."""
+    from openpyxl.worksheet.datavalidation import DataValidation
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Q"
+    ws["A2"] = "Encrypt at rest?"
+    dv = DataValidation(type="list", formula1='"Yes,No"', allow_blank=True)
+    ws.add_data_validation(dv)
+    dv.add("B2")
+    orig = tmp_path / "q.xlsx"
+    wb.save(orig)
+
+    result = QuestionnaireResult(
+        source_file=str(orig),
+        results=[_answered("q1", "Encrypt at rest?", "Yes. All data is AES-256 encrypted.", "Q!B2")],
+    )
+    info = write_back(result, str(orig), str(tmp_path / "out"))
+    out_ws = openpyxl.load_workbook(info["written"])["Q"]
+    assert out_ws["B2"].value == "Yes"  # coerced to the allowed dropdown option
+
+
 def test_writeback_docx_paragraph(tmp_path):
     import docx
 

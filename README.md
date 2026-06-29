@@ -292,7 +292,9 @@ qresponder answer -q f.xlsx --kb ./kb --writeback
 ```
 
 It writes to the top-left cell of merged ranges, sets values only (preserving
-shared styles), and — because openpyxl can drop embedded images/charts on save —
+shared styles **and data validations / dropdowns** — a dropdown answer is even
+coerced to its allowed option, e.g. a verbose "Yes…" becomes `Yes`), and —
+because openpyxl can drop embedded images/charts on save —
 **falls back to the separate `answered.xlsx` rather than risk stripping your
 diagrams** when the workbook contains media. Only confident (ANSWERED) cells are
 filled; review items are left blank. The Phase-0/1 outputs (`answered.*`,
