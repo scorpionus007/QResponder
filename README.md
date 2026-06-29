@@ -2,12 +2,14 @@
 
 **Self-hostable, bring-your-own-model security-questionnaire automation.**
 
-QRESPONDER drafts grounded, cited answers to vendor security questionnaires
-(SIG, CAIQ, VSAQ, custom Excel/Word/PDF) from *your own* knowledge base — and
-routes everything uncertain to a human. It runs entirely on your infrastructure
-with any model: a local Llama/Qwen via Ollama/vLLM, or a cloud API. A security
-tool that demands you upload your security posture to someone's cloud is a
-contradiction — so QRESPONDER doesn't.
+QRESPONDER **runs on your own infrastructure, proves its own accuracy, refuses to
+fabricate, and hands you an audit trail** — it's not an "AI questionnaire filler."
+It drafts grounded, cited answers to vendor security questionnaires (SIG, CAIQ,
+VSAQ, custom Excel/Word/PDF) from *your own* knowledge base, treats document
+content as data (never instructions), and routes everything uncertain to a human.
+It runs entirely on your infrastructure with any model: a local Llama/Qwen via
+Ollama/vLLM, or a cloud API. A security tool that demands you upload your security
+posture to someone's cloud is a contradiction — so QRESPONDER doesn't.
 
 > **Status:** feature-complete engine (Phases 0–3). Ingest → AI-extract →
 > Tier-1 library → retrieval/in-context answer → faithfulness-verify →
@@ -319,6 +321,21 @@ and flags clear contradictions — opposite yes/no, different control values
 conflicting source named. It's conservative (no false-positive noise), never
 auto-resolves (both sides surfaced), and never flags or overrides an approved
 Tier-1 answer.
+
+## Accuracy & consistency (Part G)
+
+- **Consistency over time** — a new answer that contradicts a *prior submission*
+  for a similar question is flagged `history_conflict` (with the prior answer +
+  date), so your posture doesn't silently drift between questionnaires.
+- **Compound-question decomposition** — a multi-part item ("do you encrypt at
+  rest, in transit, and in backups?") is split, each part answered grounded, and
+  recomposed into structured `subanswers`. If **any** part is unsupported the
+  whole item is flagged — no silently-dropped sub-question.
+- **Query normalization** — before retrieval, acronyms are expanded from a
+  glossary (so an `MFA?` query also carries "multi-factor authentication" and
+  matches the spelled-out KB chunk) and boilerplate is stripped, lifting recall.
+- **Duplicate grouping** — near-identical questions in one run are answered once
+  and applied to all members (consistency + fewer calls).
 
 ## Try it in 30 seconds (no API key)
 

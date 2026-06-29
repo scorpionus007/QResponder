@@ -28,6 +28,7 @@ from ..models import (
     Question,
     ReviewReason,
     Status,
+    SubAnswer,
 )
 from .answer import answer_batch
 
@@ -110,6 +111,31 @@ def _ambiguous_result(q: Question, candidates) -> AnswerResult:
     )
 
 
+def _compound_result(q: Question, options) -> AnswerResult:
+    """Recompose a decomposed compound question (G2). If any sub-part is
+    unsupported, the whole item is NEEDS_REVIEW — no silently-dropped part."""
+    subs = [
+        SubAnswer(part=o.interpretation, answer=o.answer, citations=o.citations, status=o.status)
+        for o in options
+    ]
+    all_answered = bool(subs) and all(s.status == Status.ANSWERED for s in subs)
+    combined = "\n".join(f"- {s.part} {s.answer}".strip() for s in subs if s.answer)
+    citations = [c for s in subs for c in s.citations]
+    unanswered = [s.part for s in subs if s.status != Status.ANSWERED]
+    return AnswerResult(
+        question_id=q.id,
+        question_text=q.text,
+        answer=combined,
+        answer_type=q.answer_type if q.answer_type != AnswerType.UNKNOWN else AnswerType.TEXT,
+        citations=citations,
+        confidence=Confidence.MEDIUM if all_answered else Confidence.LOW,
+        status=Status.ANSWERED if all_answered else Status.NEEDS_REVIEW,
+        review_reason=ReviewReason.NONE if all_answered else ReviewReason.UNSUPPORTED,
+        subanswers=subs,
+        missing_info=None if all_answered else f"Unsupported sub-question(s): {', '.join(unanswered)}.",
+    )
+
+
 def _payload(q: Question) -> dict:
     return {
         "question_id": q.id,
@@ -144,10 +170,11 @@ def orchestrate(
     config: Config,
     scope_tags=None,
     evidence=None,
+    history=None,
 ) -> list[AnswerResult]:
     from ..models import AuditTrail, RetrievedCandidate
     from .confidence import confidence_rationale, decide_confidence, grounding_score
-    from .conflicts import detect_conflicts
+    from .conflicts import detect_conflicts, detect_history_conflicts
     from .faithfulness import verify_results
     from .interpretations import answer_interpretations
 
@@ -162,11 +189,20 @@ def orchestrate(
     if not retrieval_mode:
         shared_ctx = kb.assemble_context(scope_tags=scope_tags, max_chars=config.max_kb_chars)
 
+    from .normalize import normalize_query
+
+    glossary = getattr(config, "glossary", {}) or {}
+
+    def _retrieve(q: Question):
+        # G3: normalize the query (acronym expansion + boilerplate strip) to lift
+        # recall before hitting the retriever.
+        return kb.retrieve(normalize_query(q.text, glossary), scope_tags=scope_tags)
+
     def ctx_for(q: Question):
         """(context, top_score) for a question — per-question in retrieval mode,
         the shared assembled context otherwise."""
         if retrieval_mode:
-            hits = kb.retrieve(q.text, scope_tags=scope_tags)
+            hits = _retrieve(q)
             ctx = "\n\n".join(f"[source: {c.source}] {c.text}" for c, _ in hits)
             return ctx, (hits[0][1] if hits else None)
         return shared_ctx, None
@@ -204,6 +240,24 @@ def orchestrate(
         results[q.id] = _ambiguous_result(q, candidates)
         n_ambig += 1
 
+    # Compound decomposition (G2): split multi-part items, answer each part
+    # grounded, recompose with subanswers. Handled before dedup so a compound
+    # question isn't clustered as if it were atomic.
+    from .decompose import is_compound, split_parts
+
+    n_compound = 0
+    remaining = []
+    for q in to_generate:
+        if is_compound(q.text):
+            ctx, _ = ctx_for(q)
+            parts = split_parts(q.text)
+            options = answer_interpretations(provider, q.text, parts, ctx)
+            results[q.id] = _compound_result(q, options)
+            n_compound += 1
+        else:
+            remaining.append(q)
+    to_generate = remaining
+
     # Duplicate grouping (Part E): only the canonical of each near-duplicate
     # cluster is answered; members reuse its result with a shared group_id.
     if getattr(config, "dedup_questions", True):
@@ -218,7 +272,7 @@ def orchestrate(
         # Per-question retrieval: each question gets its own reranked top-k
         # context. Small N — no need to force shared-context batching (§B1).
         for q in to_generate:
-            hits = kb.retrieve(q.text, scope_tags=scope_tags)
+            hits = _retrieve(q)
             ctx = "\n\n".join(f"[source: {c.source}] {c.text}" for c, _ in hits)
             retrieval_score[q.id] = hits[0][1] if hits else None
             retrieved_map[q.id] = [
@@ -296,6 +350,10 @@ def orchestrate(
     # Cross-source conflict detection (D1): compare answered results against the
     # Library and each other; flag clear contradictions for human reconciliation.
     detect_conflicts(list(results.values()), library, provider, config)
+
+    # Consistency over time (G1): flag answers that drift from a past submission.
+    if history:
+        detect_history_conflicts(list(results.values()), history, provider, config)
 
     # SME routing (Part E): assign an owner to flagged items by tag/category
     # match (metadata only — no email/send). Owner tag matched against the run's

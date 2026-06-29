@@ -90,6 +90,76 @@ def _flag(result: AnswerResult, desc: str) -> None:
         result.missing_info = "Contradicts another source — reconcile before using."
 
 
+def detect_history_conflicts(
+    results: list[AnswerResult],
+    history: list[dict],
+    provider: LLMProvider,
+    config,
+) -> list[AnswerResult]:
+    """Flag drift over time (G1): an answer in this run that contradicts a prior
+    submission for a similar question -> HISTORY_CONFLICT. Conservative; reuses
+    the same heuristics. Never flags Tier-1 reuse (the approved answer is the
+    authority and is never overridden)."""
+    if not history or not getattr(config, "detect_conflicts", True):
+        return results
+    floor = getattr(config, "conflict_similarity_floor", 0.4)
+    use_judge = getattr(config, "conflict_use_judge", True)
+
+    candidates = [
+        r for r in results
+        if r.status == Status.ANSWERED and r.source_tier != 1
+        and r.answer_type != AnswerType.ATTACHMENT and r.answer.strip()
+    ]
+    judge_queue: list[dict] = []
+    pair_meta: dict[str, tuple] = {}
+    to_flag: list[tuple] = []
+
+    for r in candidates:
+        for h in history:
+            hq, ha = str(h.get("question", "")), str(h.get("answer", ""))
+            if not ha or lexical_similarity(r.question_text, hq) < floor:
+                continue
+            if _heuristic_conflict(r.answer, ha):
+                to_flag.append((r, h))
+                break
+            elif use_judge:
+                pid = f"h{len(pair_meta)}"
+                judge_queue.append({"id": pid, "a_question": r.question_text, "a_answer": r.answer,
+                                    "b_question": hq, "b_answer": ha})
+                pair_meta[pid] = (r, h)
+
+    if judge_queue:
+        try:
+            text = provider.complete(prompts.CONFLICT_SYSTEM, prompts.build_conflict_user(judge_queue), max_tokens=2048)
+            for v in parse_json_array(text):
+                if isinstance(v, dict) and v.get("conflict") and str(v.get("id")) in pair_meta:
+                    to_flag.append(pair_meta[str(v["id"])])
+        except Exception as exc:  # noqa: BLE001
+            log.warning("History-conflict judge failed (%s); heuristics only.", exc)
+
+    seen = set()
+    for r, h in to_flag:
+        if id(r) in seen:
+            continue
+        seen.add(id(r))
+        date = h.get("date")
+        r.status = Status.NEEDS_REVIEW
+        r.review_reason = ReviewReason.HISTORY_CONFLICT
+        r.confidence = Confidence.LOW
+        r.conflict_with = (f"prior submission" + (f" ({date})" if date else "") +
+                           f": \"{_short(h.get('answer', ''))}\"")
+        if not r.missing_info:
+            r.missing_info = "Differs from a previously submitted answer — reconcile before using."
+    if seen:
+        log.info("History-conflict detection flagged %d answer(s).", len(seen))
+    return results
+
+
+def _short(text: str) -> str:
+    text = (text or "").strip()
+    return text if len(text) <= _SUMMARY_CHARS else text[: _SUMMARY_CHARS - 1] + "…"
+
+
 def detect_conflicts(
     results: list[AnswerResult],
     library,

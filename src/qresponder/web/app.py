@@ -65,6 +65,8 @@ class _Job:
         self.questionnaire_path: str | None = None
         self.result: QuestionnaireResult | None = None
         self.approved: dict[str, str] = {}  # qid -> approved text (idempotent re-accept)
+        self.history: list = []           # prior submissions (G1)
+        self.history_path: str | None = None  # where to append on export
 
 
 class AcceptBody(BaseModel):
@@ -109,7 +111,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         try:
             result = run_pipeline(
                 job.questionnaire_path, kb, qa, cfg,
-                scope_tags=job.tags, evidence_dir=evidence,
+                scope_tags=job.tags, evidence_dir=evidence, history=job.history,
             )
             job.result = result
             _persist(job)
@@ -120,10 +122,12 @@ def create_app(config: Config | None = None) -> FastAPI:
             job.status = "error"
 
     def _start_job(out_dir: Path, qa_path: str, tags, questionnaire: UploadFile,
-                   data: bytes, kb, evidence, cfg: Config) -> str:
+                   data: bytes, kb, evidence, cfg: Config, history=None, history_path=None) -> str:
         run_id = uuid.uuid4().hex[:12]
         out_dir.mkdir(parents=True, exist_ok=True)
         job = _Job(run_id, out_dir, qa_path, normalize_tags(tags))
+        job.history = history or []
+        job.history_path = history_path
         dest = out_dir / _safe_filename(questionnaire.filename or "questionnaire")
         dest.write_bytes(data)
         job.questionnaire_path = str(dest)
@@ -346,9 +350,13 @@ def create_app(config: Config | None = None) -> FastAPI:
         scope = parse_tags(tags) if tags else ws.default_tags()
         out_dir = ws.runs_dir / uuid.uuid4().hex[:12]
         data = await questionnaire.read()
+        from ..core.history import HistoryStore
+
+        hist_path = ws.path / "history.yaml"
         run_id = _start_job(
             out_dir, str(ws.qa_path), scope, questionnaire, data,
             str(ws.kb_dir), str(ws.evidence_dir), cfg,
+            history=HistoryStore(hist_path).load(), history_path=str(hist_path),
         )
         return {"run_id": run_id, "workspace": wid}
 
@@ -480,6 +488,14 @@ def create_app(config: Config | None = None) -> FastAPI:
             }
             if writeback_info["written"]:
                 artifacts["writeback"] = writeback_info["written"]
+        # Record this submission in the workspace history (G1).
+        if job.history_path:
+            from datetime import datetime, timezone
+
+            from ..core.history import HistoryStore
+
+            HistoryStore(job.history_path).append(
+                job.result, datetime.now(timezone.utc).strftime("%Y-%m-%d"))
         return {"artifacts": artifacts, "writeback": writeback_info}
 
     @app.post("/api/runs/{run_id}/audit")

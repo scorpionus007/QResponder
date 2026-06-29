@@ -72,6 +72,8 @@ class Config(BaseModel):
     dedup_threshold: float = 0.9
     # SME routing (Part E): map of tag -> owner for flagged items.
     owners: dict = {}
+    # Acronym glossary for query normalization (Part G3): acronym -> expansion.
+    glossary: dict = {}
     # Cross-source conflict detection (D1).
     detect_conflicts: bool = True
     conflict_use_judge: bool = True       # LLM-judge for nuanced (non-heuristic) pairs
