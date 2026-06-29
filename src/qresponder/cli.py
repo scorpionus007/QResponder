@@ -263,6 +263,37 @@ def audit(
         typer.echo(f"  zip:        {bundle_zip(run)}")
 
 
+@app.command(name="kb-check")
+def kb_check_cmd(
+    qa: str = typer.Option("qa.yaml", "--qa", help="Answer Library YAML to scan"),
+    merge_duplicates: bool = typer.Option(False, "--merge-duplicates", help="Version-bump duplicate canonicals (never deletes)"),
+    config_path: str = typer.Option("config.yaml", "--config"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+):
+    """Scan the Answer Library for internal contradictions + near-duplicates (read-only)."""
+    _setup_logging(verbose)
+    from .core.kb_health import check_library
+    from .core.kb_health import merge_duplicates as do_merge
+
+    cfg = load_config(config_path)
+    report = check_library(qa, config=cfg)
+    typer.secho(f"Library health — {report['n_entries']} entries", fg=typer.colors.GREEN)
+    if report["clean"]:
+        typer.secho("  ✓ No contradictions or duplicates found.", fg=typer.colors.GREEN)
+    for c in report["contradictions"]:
+        typer.secho(f"  ✗ CONTRADICTION (sim {c['similarity']}):", fg=typer.colors.RED)
+        typer.echo(f"      [{c['a_index']}] {c['question_a']} → {c['answer_a']}")
+        typer.echo(f"      [{c['b_index']}] {c['question_b']} → {c['answer_b']}")
+    for d in report["duplicates"]:
+        typer.secho(f"  ⚠ DUPLICATE (sim {d['similarity']}): "
+                    f"[{d['a_index']}] {d['question_a']}  ≈  [{d['b_index']}] {d['question_b']}",
+                    fg=typer.colors.YELLOW)
+    if merge_duplicates:
+        m = do_merge(qa, config=cfg)
+        typer.secho(f"  merged {m['merged']} duplicate canonical(s) (version-bumped, none deleted).",
+                    fg=typer.colors.GREEN)
+
+
 @app.command(name="export-flagged")
 def export_flagged_cmd(
     run: str = typer.Option(..., "--run", help="Run dir containing results.json"),

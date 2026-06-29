@@ -12,6 +12,10 @@ versioning.
     per-workspace presets; `--preset` / run form / workspace default. Style-only:
     subordinate to grounding (can't fabricate or drop citations); recorded in the
     audit trail.
+  - **`qresponder kb-check`** — scans the Answer Library against itself for
+    internal contradictions + near-duplicates (conservative; reuses the conflict
+    heuristics). Read-only by default; `--merge-duplicates` version-bumps via
+    approve_one and never deletes. Web endpoint per workspace.
 - **Provably-superior phase (A–G).**
   - **A — Provable accuracy:** RAGAS-aligned eval (faithfulness, answer relevancy,
     context precision/recall, correctness) + retrieval Recall@K/MRR, a calibration

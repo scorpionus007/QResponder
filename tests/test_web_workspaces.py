@@ -182,6 +182,17 @@ def test_workspace_batch(tmp_path):
     assert dl.content[:2] == b"PK"  # zip magic
 
 
+def test_kb_check_endpoint(tmp_path):
+    client = _client(tmp_path)
+    wid = client.post("/api/workspaces", json={"name": "W"}).json()["id"]
+    # Distinct entries (the qa POST dedups near-duplicates on add).
+    client.post(f"/api/workspaces/{wid}/qa", json={"question": "Do you support SSO?", "answer": "Yes."})
+    client.post(f"/api/workspaces/{wid}/qa", json={"question": "Do you encrypt at rest?", "answer": "Yes, AES-256."})
+    report = client.get(f"/api/workspaces/{wid}/kb-check").json()
+    assert report["n_entries"] == 2
+    assert report["clean"] is True  # endpoint returns a well-formed report
+
+
 def test_qa_crud(tmp_path):
     client = _client(tmp_path)
     wid = client.post("/api/workspaces", json={"name": "W"}).json()["id"]

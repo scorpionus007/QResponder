@@ -46,6 +46,7 @@ def test_no_top_level_retrieval_deps():
             "qresponder.core.decompose",
             "qresponder.core.history",
             "qresponder.core.presets",
+            "qresponder.core.kb_health",
             "qresponder.kb.retrieval",
             "qresponder.kb.evidence",
             "qresponder.llm.embeddings",

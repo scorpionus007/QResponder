@@ -331,6 +331,13 @@ def create_app(config: Config | None = None) -> FastAPI:
         write_library(ws.qa_path, lib.entries)
         return list_qa(wid)
 
+    @app.get("/api/workspaces/{wid}/kb-check")
+    def kb_check(wid: str):
+        from ..core.kb_health import check_library
+
+        ws = _ws(wid)
+        return check_library(ws.qa_path, config=config)
+
     # ---- per-workspace settings -------------------------------------------
     @app.get("/api/workspaces/{wid}/settings")
     def get_settings(wid: str):
