@@ -63,6 +63,13 @@ class Config(BaseModel):
     max_kb_chars: int = 150_000
     verify_faithfulness: bool = True
     batch_size: int = 12
+    # Cross-source conflict detection (D1).
+    detect_conflicts: bool = True
+    conflict_use_judge: bool = True       # LLM-judge for nuanced (non-heuristic) pairs
+    # Only compare questions at least this similar. Short paraphrased questions
+    # ("Do you encrypt at rest?" vs "Is data at rest encrypted?") score ~0.43
+    # lexically; unrelated questions score ~0.17 — 0.4 separates them.
+    conflict_similarity_floor: float = 0.4
     # Cross-encoder rerank score at/above which retrieval counts as "strong"
     # for the confidence rule (§11). Reranker-dependent — tune via `eval`.
     strong_rerank_score: float = 0.0

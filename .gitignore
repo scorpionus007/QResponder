@@ -25,6 +25,7 @@ coverage.xml
 
 # Output artifacts
 out/
+demo_out/
 *.local.yaml
 
 # OS

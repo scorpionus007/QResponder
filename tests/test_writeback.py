@@ -121,6 +121,30 @@ def test_writeback_heuristic_response_column(tmp_path):
     assert out_ws["B2"].value == "Yes, AES-256."
 
 
+def test_writeback_never_overwrites_filled_response_cell(tmp_path):
+    """SH3: if the header-matched response cell already has content, write-back
+    must not overwrite it — it falls through to the next empty cell."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Q"
+    ws["A1"] = "Question"
+    ws["B1"] = "Response"
+    ws["A2"] = "Encrypt at rest?"
+    ws["B2"] = "PRE-EXISTING ANSWER"  # response column already filled in this row
+    orig = tmp_path / "q.xlsx"
+    wb.save(orig)
+
+    r = _answered("q1", "Encrypt at rest?", "Yes, AES-256.", None)
+    r.location_hint = "Q!A2"
+    result = QuestionnaireResult(source_file=str(orig), results=[r])
+    info = write_back(result, str(orig), str(tmp_path / "out"))
+
+    out_ws = openpyxl.load_workbook(info["written"])["Q"]
+    assert out_ws["B2"].value == "PRE-EXISTING ANSWER"  # not overwritten
+    # The answer landed in the next empty cell instead.
+    assert out_ws["C2"].value == "Yes, AES-256."
+
+
 def test_writeback_docx_paragraph(tmp_path):
     import docx
 

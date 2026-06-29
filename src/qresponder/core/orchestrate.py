@@ -128,6 +128,7 @@ def orchestrate(
     evidence=None,
 ) -> list[AnswerResult]:
     from .confidence import decide_confidence, grounding_score
+    from .conflicts import detect_conflicts
     from .faithfulness import verify_results
     from .interpretations import answer_interpretations
 
@@ -226,6 +227,10 @@ def orchestrate(
             retrieval_score=score,
             strong_threshold=threshold,
         )
+
+    # Cross-source conflict detection (D1): compare answered results against the
+    # Library and each other; flag clear contradictions for human reconciliation.
+    detect_conflicts(list(results.values()), library, provider, config)
 
     log.info(
         "Orchestrated: %d tier-1 reuse, %d library-candidate, %d ambiguous, "

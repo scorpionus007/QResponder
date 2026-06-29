@@ -77,6 +77,30 @@ def test_eval_threshold_is_config_driven():
     assert r_high.confidence == Confidence.MEDIUM
 
 
+def test_shipped_golden_eval_runs_end_to_end():
+    """D2: the in-repo golden eval.yaml runs against the example KB + Library and
+    produces a report with all metric keys out of the box."""
+    root = Path(__file__).parent.parent
+    cfg = Config(llm_provider="mock", kb_mode="in_context")
+    report = run_eval(
+        root / "eval.yaml",
+        kb_dir=str(root / "tests" / "fixtures" / "kb"),
+        qa_path=str(root / "qa.example.yaml"),
+        config=cfg,
+        provider=MockProvider(),
+    )
+    assert report.n_items == 20
+    # All headline metric keys present and computed.
+    assert report.faithfulness_rate is not None
+    assert report.correctness is not None
+    assert report.coverage["answered"] + report.coverage["flagged"] == 20
+    assert report.coverage["flagged"] >= 1  # the intentionally-unsupported items
+    assert report.score_distribution.get("answered") is not None
+    text = format_report(report)
+    for key in ("Recall@", "faithfulness", "correctness", "auto-answered", "score distribution"):
+        assert key in text
+
+
 class _StubEmbedder:
     def embed(self, texts):
         return [[1.0, 0.0] for _ in texts]

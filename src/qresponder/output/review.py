@@ -19,6 +19,7 @@ _REASON_TITLES = {
     ReviewReason.PARSE_ERROR: "Model output could not be parsed",
     ReviewReason.ATTACHMENT_UNRESOLVED: "Attachment requested — resolve a document",
     ReviewReason.LIBRARY_CANDIDATE: "Possible Answer Library match — confirm reuse",
+    ReviewReason.CONFLICT: "Conflicting answers — reconcile the sources",
     ReviewReason.NONE: "Flagged for review",
 }
 
@@ -54,6 +55,11 @@ def build_review_md(result: QuestionnaireResult) -> str:
                 lines.append(f"- **{r.question_text}**")
                 if r.missing_info:
                     lines.append(f"  - Missing: {r.missing_info}")
+                # Conflict: show this answer vs. the conflicting source.
+                if r.conflict_with:
+                    if r.answer:
+                        lines.append(f"  - This answer: {r.answer}")
+                    lines.append(f"  - Conflicts with — {r.conflict_with}")
                 # Ambiguous: show each interpretation's draft so the human picks.
                 for opt in r.candidates:
                     lines.append(f"  - _Interpretation:_ {opt.interpretation}")

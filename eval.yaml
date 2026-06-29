@@ -1,0 +1,106 @@
+# Golden evaluation set — ships in-repo so `qresponder eval` gives a baseline
+# out of the box. Run it against the example KB + Answer Library:
+#
+#   qresponder eval --set eval.yaml --kb tests/fixtures/kb --qa qa.example.yaml
+#   qresponder eval --set eval.yaml --kb tests/fixtures/kb --qa qa.example.yaml --mode retrieval
+#
+# Item schema: question, key_facts: [...], tags: [...], expected_source? (filename).
+# Some items are intentionally unsupported by the KB to exercise coverage/flagging.
+
+- question: "Do you encrypt data at rest?"
+  key_facts: ["AES-256"]
+  tags: [soc2, encryption]
+  expected_source: policy_encryption.md
+
+- question: "Is data encrypted in transit?"
+  key_facts: ["TLS"]
+  tags: [soc2, encryption, network]
+  expected_source: policy_transit_encryption.md
+
+- question: "Do you enforce multi-factor authentication for employees?"
+  key_facts: ["MFA"]
+  tags: [soc2, access-control]
+  expected_source: policy_access_control.md
+
+- question: "Do you have a documented incident response plan?"
+  key_facts: ["incident response"]
+  tags: [soc2, incident-response]
+  expected_source: policy_incident_response.md
+
+- question: "Do you perform penetration testing?"
+  key_facts: ["penetration testing"]
+  tags: [soc2, vulnerability]
+  expected_source: policy_vuln_management.md
+
+- question: "Do you run vulnerability scanning?"
+  key_facts: ["scanning"]
+  tags: [soc2, vulnerability]
+  expected_source: policy_vuln_management.md
+
+- question: "Are security events logged and monitored?"
+  key_facts: ["monitored"]
+  tags: [soc2, logging]
+  expected_source: policy_logging.md
+
+- question: "Do you alert on suspicious authentication activity?"
+  key_facts: ["alerting"]
+  tags: [soc2, logging]
+  expected_source: policy_logging.md
+
+- question: "Do you assess third-party vendors?"
+  key_facts: ["assessed"]
+  tags: [soc2, vendor]
+  expected_source: policy_vendor_risk.md
+
+- question: "Do you track subprocessors handling customer data?"
+  key_facts: ["subprocessors"]
+  tags: [soc2, vendor]
+  expected_source: policy_vendor_risk.md
+
+- question: "What is your disaster recovery RTO?"
+  key_facts: ["RTO"]
+  tags: [soc2, resilience]
+  expected_source: policy_bcdr.md
+
+- question: "Do you run across redundant availability zones?"
+  key_facts: ["redundant"]
+  tags: [soc2, resilience]
+  expected_source: policy_bcdr.md
+
+- question: "Is failover tested regularly?"
+  key_facts: ["failover"]
+  tags: [soc2, resilience]
+  expected_source: policy_bcdr.md
+
+- question: "Is access reviewed regularly?"
+  key_facts: ["quarterly"]
+  tags: [soc2, access-control]
+  expected_source: policy_access_control.md
+
+- question: "Do you encrypt service-to-service traffic?"
+  key_facts: ["encrypted"]
+  tags: [soc2, encryption, network]
+  expected_source: policy_transit_encryption.md
+
+- question: "Do you disable weak ciphers and protocols?"
+  key_facts: ["weak ciphers"]
+  tags: [soc2, encryption, network]
+  expected_source: policy_transit_encryption.md
+
+- question: "How quickly do you remediate critical vulnerabilities?"
+  key_facts: ["30 days"]
+  tags: [soc2, vulnerability]
+  expected_source: policy_vuln_management.md
+
+# --- Intentionally unsupported by the KB: should be flagged, not fabricated ---
+- question: "What is the data retention period for customer backups?"
+  key_facts: []
+  tags: [soc2]
+
+- question: "Do you offer a public bug bounty program?"
+  key_facts: []
+  tags: [soc2]
+
+- question: "What is your annual employee turnover rate?"
+  key_facts: []
+  tags: [hr]

@@ -93,8 +93,23 @@ class MockProvider:
             return self._mock_correctness(user)
         if system.startswith("A questionnaire item is ambiguous"):
             return self._mock_interpretations(user)
+        if system.startswith("You compare pairs of answers"):
+            return self._mock_conflicts(user)
         # doctor preflight uses a tiny JSON echo request.
         return '{"ok": true}'
+
+    # --- conflict judge --------------------------------------------------
+    def _mock_conflicts(self, user: str) -> str:
+        """Conservative default: the mock cannot adjudicate nuance, so it reports
+        NO conflict for every pair (the cheap heuristics in core/conflicts.py
+        catch the clear contradictions without the judge). This avoids
+        false-positive review noise."""
+        try:
+            start, end = user.find("["), user.rfind("]")
+            items = json.loads(user[start : end + 1]) if start != -1 else []
+        except (json.JSONDecodeError, ValueError):
+            items = []
+        return json.dumps([{"id": str(it.get("id", "")), "conflict": False, "why": ""} for it in items])
 
     # --- interpretations -------------------------------------------------
     def _mock_interpretations(self, user: str) -> str:

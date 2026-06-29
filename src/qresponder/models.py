@@ -40,6 +40,7 @@ class ReviewReason(str, Enum):
     PARSE_ERROR = "parse_error"
     ATTACHMENT_UNRESOLVED = "attachment_unresolved"
     LIBRARY_CANDIDATE = "library_candidate"
+    CONFLICT = "conflict"
 
 
 class Question(BaseModel):
@@ -91,6 +92,9 @@ class AnswerResult(BaseModel):
     # Write-back anchors carried from the Question for format-perfect output (C3).
     location_hint: str | None = None
     answer_location_hint: str | None = None
+    # Set when this answer contradicts another source (D1): a short description
+    # of the conflicting source/answer the human must reconcile.
+    conflict_with: str | None = None
 
 
 class QuestionnaireResult(BaseModel):

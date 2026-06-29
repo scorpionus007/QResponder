@@ -9,14 +9,15 @@ with any model: a local Llama/Qwen via Ollama/vLLM, or a cloud API. A security
 tool that demands you upload your security posture to someone's cloud is a
 contradiction — so QRESPONDER doesn't.
 
-> **Status:** Phases 0–2 complete. Ingest → AI-extract → Tier-1 library →
-> retrieval/in-context answer → faithfulness-verify → confidence → NEEDS_REVIEW
-> → output + review. Phase 1 adds hybrid retrieval (BM25 + dense + RRF) →
-> cross-encoder rerank, faithfulness/citation verification, and an eval harness.
-> Phase 2 adds ambiguity/interpretation surfacing, attachment resolution from an
-> evidence vault, format-perfect write-back into the original template, and the
-> approve-back flywheel. Two-adapter BYOM, `doctor` preflight, CLI, Docker,
-> mock-tested (zero network).
+> **Status:** feature-complete engine (Phases 0–3). Ingest → AI-extract →
+> Tier-1 library → retrieval/in-context answer → faithfulness-verify →
+> cross-source conflict check → confidence → NEEDS_REVIEW → output + review.
+> Phase 1: hybrid retrieval (BM25 + dense + RRF) → cross-encoder rerank,
+> faithfulness/citation verification, eval harness. Phase 2: ambiguity surfacing,
+> attachment resolution, format-perfect write-back, approve-back flywheel.
+> Phase 3: cross-source conflict detection + launch hardening (golden eval, CI,
+> demo). Two-adapter BYOM, `doctor` preflight, CLI, Docker, **70 tests, all
+> offline**. Recommended next: a minimal local web review UI.
 
 ## Why it's honest by construction
 
@@ -133,12 +134,28 @@ Turn "is my local Llama good enough?" into numbers:
 qresponder eval --set eval.yaml --kb ./kb --qa qa.yaml --mode retrieval
 ```
 
-It runs a golden set (`eval.example.yaml` for the format) through the real
-answer path and reports **Recall@K** (was the expected source retrieved),
-**faithfulness rate**, **answer correctness** (LLM-judge on key-fact coverage),
-and **coverage** (% auto-answered vs % flagged, by reason). The correctness
-judge should be calibrated against a small human-graded baseline — judges
-hallucinate too.
+It runs a golden set through the real answer path and reports **Recall@K** (was
+the expected source retrieved), **faithfulness rate**, **answer correctness**
+(LLM-judge on key-fact coverage), and **coverage** (% auto-answered vs % flagged,
+by reason). The correctness judge should be calibrated against a small
+human-graded baseline — judges hallucinate too.
+
+A golden `eval.yaml` (20 SIG/CAIQ-style questions) ships in-repo:
+
+```
+qresponder eval --set eval.yaml --kb tests/fixtures/kb --qa qa.example.yaml
+```
+
+**Reproducible baseline** (deterministic `LLM_PROVIDER=mock`, in-context — this
+measures pipeline *structure*, not model quality; real correctness depends on
+your model):
+
+```
+items: 20 · faithfulness: 100% · auto-answered: 85% · flagged: 15% (3 unsupported)
+correctness (key-fact coverage): 47% · suggested grounding threshold: 0.77
+```
+
+Swap in your model (Anthropic or a local Ollama) to get *your* accuracy numbers.
 
 ## Phase 2 — the differentiators
 
@@ -185,6 +202,25 @@ qresponder approve --results out/results.json --qa qa.yaml --by you --tags soc2
 Accepted answers become versioned approved entries; re-approving the same
 question bumps its version and updates the answer instead of duplicating.
 
+**Cross-source conflict detection.** Contradictory answers are the #1 reason a
+questionnaire gets kicked back. QRESPONDER compares each answer against the
+Answer Library and the other answers in the run (only for similar questions),
+and flags clear contradictions — opposite yes/no, different control values
+(TLS/AES versions, retention periods) — as `NEEDS_REVIEW` / `conflict` with the
+conflicting source named. It's conservative (no false-positive noise), never
+auto-resolves (both sides surfaced), and never flags or overrides an approved
+Tier-1 answer.
+
+## Try it in 30 seconds (no API key)
+
+```
+make demo          # or: bash scripts/demo.sh
+```
+
+Runs the full pipeline on the sample with the deterministic mock provider and
+writes `demo_out/` — `answered.xlsx`, `results.json`, `review.md`, and the
+filled-in copy `sample.answered.xlsx`.
+
 ## Honest accuracy stance
 
 Best results come from a frontier API model or a large local model. Small local
@@ -230,8 +266,22 @@ tag-scoped so GDPR questions don't pull SOC 2 evidence.
   faithfulness/citation verification; tag-scoping; eval harness. ✅
 - **Phase 2** — ambiguity/interpretation surfacing; attachment resolution;
   format-perfect write-back; approved-answer flywheel. ✅
-- **Phase 3** — prior-submission mining + cross-source conflict detection; web
-  UI; portal autofill; multi-tenant.
+- **Phase 3** — cross-source conflict detection + launch hardening (golden eval,
+  CI, demo, docs). ✅ The engine is now feature-complete.
+- **Next (recommended)** — a minimal local web review UI (upload → run → review
+  queue with accept/edit/pick-interpretation/confirm-attachment → export +
+  approve). The real adoption lever once the engine is complete.
+
+**Deliberately out of scope** (with rationale): Tier-4 prior-submission mining
+(the flywheel already promotes accepted answers to higher-authority Tier-1);
+portal autofill (brittle anti-automation treadmill); multi-tenant/hosted SaaS
+(off-mission for a self-hostable OSS tool).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and
+[good first issues](docs/GOOD_FIRST_ISSUES.md). All tests run offline; keep them
+that way. Changes: [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

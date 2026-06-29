@@ -24,6 +24,9 @@ log = logging.getLogger("qresponder.attachments")
 # the runner-up), not a high absolute floor.
 MIN_SCORE = 0.15          # below this, nothing is a real match
 WINNER_MARGIN = 0.10      # top must beat runner-up by this to auto-resolve
+# When there is no real runner-up, the margin is trivially satisfied, so a single
+# weakly-related file would auto-attach. Require a higher absolute floor instead.
+SOLO_MIN_SCORE = 0.30
 TIE_EPSILON = 0.05        # within this, break ties by version/recency
 N_CANDIDATES = 3
 
@@ -90,7 +93,14 @@ def resolve_attachment(
         remaining = [s for s in scored if s[1].filename != top_item.filename]
         second_score = remaining[0][0] if remaining else 0.0
 
-    clear_winner = top_score >= MIN_SCORE and (top_score - second_score) >= WINNER_MARGIN
+    # A "real" runner-up is itself a plausible match; only then does the margin
+    # guard meaningfully discriminate. With no real runner-up, fall back to an
+    # absolute floor so a lone weak file is flagged, not auto-attached (SH2).
+    has_real_runner_up = len(scored) > 1 and second_score >= MIN_SCORE
+    if has_real_runner_up:
+        clear_winner = top_score >= MIN_SCORE and (top_score - second_score) >= WINNER_MARGIN
+    else:
+        clear_winner = top_score >= SOLO_MIN_SCORE
     if clear_winner:
         return AnswerResult(
             **base,

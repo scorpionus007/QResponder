@@ -83,11 +83,18 @@ def _resolve_xlsx_target(wb, r):
             col = column_index_from_string(col_letter)
         except Exception:  # noqa: BLE001
             return None
-        # 2a. A column whose header matches answer|response|comment.
+        # 2a. A column whose header matches answer|response|comment — but only
+        # if that row's cell is empty (never overwrite a pre-filled value, SH3).
+        header_coord = None
         for header_row in (1, 2):
             for c in ws[header_row]:
                 if c.value and _ANSWER_HEADER_RE.search(str(c.value)):
-                    return ws, f"{get_column_letter(c.column)}{row}"
+                    header_coord = f"{get_column_letter(c.column)}{row}"
+                    break
+            if header_coord:
+                break
+        if header_coord and ws[_merged_anchor(ws, header_coord)].value in (None, ""):
+            return ws, header_coord
         # 2b. First empty cell to the right in the question's row.
         for delta in (1, 2, 3):
             cand = f"{get_column_letter(col + delta)}{row}"

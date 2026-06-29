@@ -109,6 +109,27 @@ def build_interpretations_user(question: str, interpretations: list[str], kb_con
     )
 
 
+# --- Cross-source conflict judge (Phase 3, §5.2) -----------------------------
+
+CONFLICT_SYSTEM = (
+    "You compare pairs of answers to similar security-questionnaire questions "
+    "and decide whether they CONTRADICT each other (state mutually incompatible "
+    "facts — opposite yes/no, different values for the same control, etc.). "
+    "Be conservative: stylistic or scope differences are NOT contradictions; "
+    "only flag clear factual contradictions. When unsure, say no conflict. "
+    "Return ONLY a JSON array, no prose, no code fences. Each item: "
+    "{id (string), conflict (boolean), why (string)}."
+)
+
+
+def build_conflict_user(pairs: list[dict]) -> str:
+    """pairs: [{id, a_question, a_answer, b_question, b_answer}]."""
+    return (
+        "Decide, for each pair, whether the two answers contradict.\n\n"
+        + json.dumps(pairs, ensure_ascii=False, indent=2)
+    )
+
+
 # --- Eval correctness judge (Phase 1, §11) -----------------------------------
 
 EVAL_CORRECTNESS_SYSTEM = (
