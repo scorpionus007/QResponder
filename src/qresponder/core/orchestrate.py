@@ -417,6 +417,14 @@ def orchestrate(
         elif r.audit is not None:
             r.audit.safety = {"detected": False, "markers": []}
 
+    # Answer-type enforcement (Part D): shape ANSWERED results to their type using
+    # the question's allowed options where known. Format-only; never fabricates.
+    from .typeshape import shape_to_type
+
+    qopts = {q.id: q.allowed_options for q in questions}
+    for r in results.values():
+        shape_to_type(r, qopts.get(r.question_id))
+
     log.info(
         "Orchestrated: %d tier-1 reuse, %d library-candidate, %d ambiguous, "
         "%d attachment, %d generated (%s mode)",

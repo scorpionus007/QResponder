@@ -20,6 +20,10 @@ versioning.
     `⚠ NEEDS REVIEW: <reason>` (in answered.xlsx and write-back) instead of left
     blank; toggle with `--no-review-markers`. ANSWERED cells untouched; a new
     universal non-empty guard means write-back never overwrites a pre-filled cell.
+  - **Answer-type enforcement** — ANSWERED answers are shaped to their
+    `answer_type` (select/dropdown → an allowed option via the Part F coercion
+    path; yes/no left as grounded). Format-only: never fabricates an option,
+    never forces an unmappable answer, never turns an abstention into an answer.
 - **Provably-superior phase (A–G).**
   - **A — Provable accuracy:** RAGAS-aligned eval (faithfulness, answer relevancy,
     context precision/recall, correctness) + retrieval Recall@K/MRR, a calibration

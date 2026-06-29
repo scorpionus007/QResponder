@@ -56,6 +56,8 @@ class Question(BaseModel):
     # Populated when ambiguous; the extractor proposes readings, the human picks.
     interpretations: list[str] = Field(default_factory=list)
     ambiguous: bool = False
+    # Allowed options for a select/dropdown answer cell (Phase 7 Part D).
+    allowed_options: list[str] = Field(default_factory=list)
 
 
 class Citation(BaseModel):
