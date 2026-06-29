@@ -266,6 +266,31 @@ def orchestrate(
                 ),
             )
 
+    # SafeRAG (Part C): scan the question and the retrieved/cited content for
+    # prompt-injection markers. A match never changes the answer (the model was
+    # already told document content is data, not instructions) — it flags the
+    # item INJECTION_SUSPECTED so a human sees the manipulation attempt.
+    from .safety import scan_injection, scan_sources
+
+    for r in results.values():
+        sources = [c.snippet for c in (r.audit.retrieved if r.audit else [])]
+        sources += [c.snippet for c in r.citations]
+        markers = scan_injection(r.question_text) + scan_sources(sources)
+        if markers:
+            uniq = sorted(set(markers))
+            r.status = Status.NEEDS_REVIEW
+            r.review_reason = ReviewReason.INJECTION_SUSPECTED
+            if r.confidence != Confidence.LOW:
+                r.confidence = Confidence.LOW
+            r.missing_info = (
+                "Prompt-injection markers detected in the question or sources — "
+                "the engine did NOT follow them; review before using."
+            )
+            if r.audit is not None:
+                r.audit.safety = {"detected": True, "markers": uniq}
+        elif r.audit is not None:
+            r.audit.safety = {"detected": False, "markers": []}
+
     log.info(
         "Orchestrated: %d tier-1 reuse, %d library-candidate, %d ambiguous, "
         "%d attachment, %d generated (%s mode)",

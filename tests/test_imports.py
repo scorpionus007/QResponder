@@ -39,6 +39,7 @@ def test_no_top_level_retrieval_deps():
             "qresponder.core.conflicts",
             "qresponder.core.flywheel",
             "qresponder.core.workspace",
+            "qresponder.core.safety",
             "qresponder.kb.retrieval",
             "qresponder.kb.evidence",
             "qresponder.llm.embeddings",

@@ -309,9 +309,20 @@ class MockProvider:
         questions: list[dict] = []
         if prompts.QUESTIONS_MARKER in user:
             ctx_part, _, q_part = user.partition(prompts.QUESTIONS_MARKER)
-            kb_context = ctx_part.replace(prompts.KB_CONTEXT_MARKER, "").strip()
+            # Strip the SafeRAG DATA delimiters (Part C) before parsing.
+            for token in (prompts.KB_CONTEXT_MARKER, prompts.DATA_OPEN, prompts.DATA_CLOSE):
+                ctx_part = ctx_part.replace(token, "")
+                q_part = q_part.replace(token, "")
+            kb_context = ctx_part.strip()
             try:
                 questions = json.loads(q_part.strip())
             except json.JSONDecodeError:
-                questions = []
+                # Fall back to the outermost JSON span if wrappers remain.
+                lo = q_part.find("[") if "[" in q_part else q_part.find("{")
+                hi = max(q_part.rfind("]"), q_part.rfind("}"))
+                if lo != -1 and hi != -1 and hi > lo:
+                    try:
+                        questions = json.loads(q_part[lo : hi + 1])
+                    except json.JSONDecodeError:
+                        questions = []
         return kb_context, questions

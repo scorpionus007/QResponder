@@ -105,6 +105,8 @@ class AuditTrail(BaseModel):
     faithfulness: dict = Field(default_factory=dict)  # {passed: bool, reason: str}
     confidence_rationale: str = ""
     human_action: HumanAction = Field(default_factory=HumanAction)
+    # Prompt-injection scan result (Part C): {detected: bool, markers: [...], where}.
+    safety: dict = Field(default_factory=dict)
 
 
 class AnswerResult(BaseModel):
