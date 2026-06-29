@@ -74,7 +74,8 @@ def doctor(
 
 @app.command()
 def answer(
-    questionnaire: str = typer.Option(..., "--questionnaire", "-q", help="xlsx/docx/pdf file"),
+    questionnaire: str = typer.Option(None, "--questionnaire", "-q", help="xlsx/docx/pdf file"),
+    batch: list[str] = typer.Option(None, "--batch", help="Dir or glob(s) of questionnaires (repeatable)"),
     kb: str = typer.Option(None, "--kb", help="Knowledge base directory (policies/evidence)"),
     qa: str = typer.Option(None, "--qa", help="Answer Library YAML (Tier 1)"),
     evidence: str = typer.Option(None, "--evidence", help="Evidence vault dir for attachment resolution"),
@@ -106,6 +107,35 @@ def answer(
         )
 
     scope = parse_tags(tags)
+
+    # --- Batch mode (Part D): process many files in isolation, then zip. ---
+    if batch:
+        from .core.batch import resolve_questionnaires, run_batch, zip_batch
+
+        files = resolve_questionnaires(list(batch))
+        if not files:
+            typer.secho("No supported questionnaires matched --batch.", fg=typer.colors.RED)
+            raise typer.Exit(code=1)
+        summary = run_batch(files, kb, qa, cfg, out, scope_tags=scope, evidence_dir=evidence)
+        zpath = zip_batch(out)
+        typer.secho(
+            f"\nBatch: {summary['succeeded']}/{summary['n_files']} succeeded, "
+            f"{summary['failed']} failed.", fg=typer.colors.GREEN,
+        )
+        for f in summary["files"]:
+            if f["ok"]:
+                s = f["summary"]
+                typer.echo(f"  {f['file']}: {s['answered']} answered, {s['flagged']} flagged")
+            else:
+                typer.secho(f"  {f['file']}: FAILED — {f['error']}", fg=typer.colors.YELLOW)
+        typer.echo(f"  summary: {Path(out) / 'batch_summary.json'}")
+        typer.echo(f"  zip:     {zpath}")
+        return
+
+    if not questionnaire:
+        typer.secho("Provide --questionnaire <file> or --batch <dir|glob>.", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
     result = run_pipeline(questionnaire, kb, qa, cfg, scope_tags=scope, evidence_dir=evidence)
     # Always emit the safe Phase-0/1 artifacts.
     paths = write_all(result, out)

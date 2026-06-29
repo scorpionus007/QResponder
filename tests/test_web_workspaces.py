@@ -160,6 +160,28 @@ def test_no_endpoint_returns_key(tmp_path):
         assert "SECRET" not in b
 
 
+def test_workspace_batch(tmp_path):
+    """Part D: a workspace batch processes multiple files and returns a zip."""
+    client = _client(tmp_path)
+    wid = client.post("/api/workspaces", json={"name": "Acme"}).json()["id"]
+    client.post(f"/api/workspaces/{wid}/kb",
+                files={"files": ("incident.md", INCIDENT_MD, "text/markdown")})
+    with open(FIX / "sample.xlsx", "rb") as fh:
+        data = fh.read()
+    resp = client.post(
+        f"/api/workspaces/{wid}/batch",
+        files=[("files", ("q1.xlsx", data, "application/octet-stream")),
+               ("files", ("q2.xlsx", data, "application/octet-stream"))],
+    )
+    body = resp.json()
+    assert body["summary"]["n_files"] == 2
+    assert body["summary"]["succeeded"] == 2
+    # The zip is downloadable via the shared download route.
+    dl = client.get(body["download"])
+    assert dl.status_code == 200
+    assert dl.content[:2] == b"PK"  # zip magic
+
+
 def test_qa_crud(tmp_path):
     client = _client(tmp_path)
     wid = client.post("/api/workspaces", json={"name": "W"}).json()["id"]

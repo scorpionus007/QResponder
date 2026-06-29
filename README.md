@@ -346,6 +346,8 @@ qresponder doctor
 qresponder answer --questionnaire f.xlsx --kb ./kb [--qa qa.yaml] [--tags hipaa,soc2]
                   [--mode in_context|retrieval] [--evidence ./evidence] [--writeback]
                   [--out ./out] [--batch-size 12]
+qresponder answer --batch ./inbox --kb ./kb --out ./out   # many files → per-file outputs + ZIP
+qresponder audit --run ./out [--zip]                       # export the evidence pack
 qresponder extract --questionnaire f.xlsx        # debug: dump extracted questions
 qresponder eval --set eval.yaml [--kb ./kb] [--qa qa.yaml] [--mode retrieval]
 qresponder approve --results out/results.json --qa qa.yaml [--by NAME] [--tags ...]

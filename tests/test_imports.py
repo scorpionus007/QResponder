@@ -40,6 +40,7 @@ def test_no_top_level_retrieval_deps():
             "qresponder.core.flywheel",
             "qresponder.core.workspace",
             "qresponder.core.safety",
+            "qresponder.core.batch",
             "qresponder.kb.retrieval",
             "qresponder.kb.evidence",
             "qresponder.llm.embeddings",

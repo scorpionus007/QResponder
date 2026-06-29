@@ -352,6 +352,30 @@ def create_app(config: Config | None = None) -> FastAPI:
         )
         return {"run_id": run_id, "workspace": wid}
 
+    # ---- workspace batch (Part D) -----------------------------------------
+    @app.post("/api/workspaces/{wid}/batch")
+    async def ws_batch(wid: str, files: list[UploadFile]):
+        from ..core.batch import run_batch, zip_batch
+
+        ws = _ws(wid)
+        cfg = ws.effective_config(config)
+        batch_id = "batch_" + uuid.uuid4().hex[:10]
+        out_dir = ws.runs_dir / batch_id
+        in_dir = out_dir / "_in"
+        in_dir.mkdir(parents=True, exist_ok=True)
+        saved = []
+        for f in files:
+            dest = in_dir / _safe_filename(f.filename or "questionnaire")
+            dest.write_bytes(await f.read())
+            saved.append(dest)
+        summary = run_batch(saved, str(ws.kb_dir), str(ws.qa_path), cfg, out_dir,
+                            scope_tags=ws.default_tags(), evidence_dir=str(ws.evidence_dir))
+        zname = Path(zip_batch(out_dir)).name
+        # Register a pseudo-job so the existing download route serves the zip.
+        jobs[batch_id] = _Job(batch_id, out_dir, str(ws.qa_path), ws.default_tags())
+        return {"batch_id": batch_id, "summary": summary, "zip": zname,
+                "download": f"/api/runs/{batch_id}/download/{zname}"}
+
     # ---- legacy (non-workspace) run: explicit paths ------------------------
     @app.post("/api/runs")
     async def create_run(questionnaire: UploadFile, kb: str = Form(None),
