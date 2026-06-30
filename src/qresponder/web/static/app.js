@@ -208,10 +208,46 @@ function showHome(tab = "answer") {
   const wid = S.current;
   const tabs = el("div", { class: "tabs" },
     el("div", { class: "tab " + (tab === "answer" ? "active" : ""), onclick: () => showHome("answer") }, "Answer a questionnaire"),
+    el("div", { class: "tab " + (tab === "flagged" ? "active" : ""), onclick: () => showHome("flagged") }, "Flagged"),
     el("div", { class: "tab " + (tab === "settings" ? "active" : ""), onclick: () => showHome("settings") }, "Settings"));
   const view = el("div", {});
   root().replaceChildren(tabs, view);
-  if (tab === "answer") answerView(view, wid); else settingsView(view, wid);
+  if (tab === "answer") answerView(view, wid);
+  else if (tab === "flagged") flaggedView(view, wid);
+  else settingsView(view, wid);
+}
+
+// ---- cross-file flagged tab (Phase 8 E) ----
+async function flaggedView(view, wid) {
+  view.append(el("p", { class: "muted" }, "Unresolved questions grouped across all this workspace's runs. Answer once → inserted everywhere and saved to the library."));
+  const host = el("div", {});
+  view.append(host);
+  async function load() {
+    const { groups } = await api(`/api/workspaces/${wid}/flagged`);
+    if (!groups.length) { host.replaceChildren(el("div", { class: "empty-teach" }, el("strong", {}, "Nothing flagged"), " — run some questionnaires; unresolved items show up here.")); return; }
+    host.replaceChildren(...groups.map((g) => {
+      const ta = el("textarea", {}, g.draft || "");
+      const tags = el("input", { class: "tagedit", placeholder: "tags (optional)" });
+      const status = el("span", { class: "muted" });
+      const btn = el("button", { class: "btn primary", onclick: async () => {
+        if (!ta.value.trim()) return;
+        btn.disabled = true;
+        try {
+          const r = await api(`/api/workspaces/${wid}/flagged/resolve`, { method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ question: g.question, answer: ta.value, tags: tags.value.split(",").map(s => s.trim()).filter(Boolean) }) });
+          status.textContent = `✓ resolved in ${r.updated} file(s)` + (r.trained ? " · added to library" : "");
+          setTimeout(load, 600);
+        } catch (e) { status.textContent = "Error: " + e.message; btn.disabled = false; }
+      } }, "Resolve everywhere");
+      return el("div", { class: "item" },
+        el("div", { class: "item-head" }, el("div", { class: "q-text" }, g.question),
+          el("span", { class: "chip reason" }, `${g.count} file(s)`)),
+        el("div", { class: "muted" }, "Appears in: " + g.files.join(", ")),
+        el("div", { class: "answer-box" }, ta),
+        el("div", { class: "actions" }, tags, btn, status));
+    }));
+  }
+  load();
 }
 
 // ---- answer + review ----

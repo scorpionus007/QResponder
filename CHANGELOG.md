@@ -31,6 +31,12 @@ versioning.
   `/api/workspaces/{id}/batch-stream`. A vanilla command-center dashboard (tracker
   + monospace "AI thinking" console, no CDN) renders the grounded path live and
   links the filled-originals ZIP on completion.
+- **Cross-file flagged aggregation + one-click resolve (Phase 8 E).** A **Flagged**
+  tab groups identical/near-duplicate unresolved questions across all of a
+  workspace's runs (dedup similarity). Resolve once → the answer is inserted into
+  every affected file's results **and** routed through `approve_one` (one
+  versioned library entry, not N). Idempotent; respects write-back safety.
+  `GET/POST /api/workspaces/{id}/flagged[/resolve]`.
 - **Competitor-parity phase (Phase 7).**
   - **Answer-style presets** — built-in `concise`/`detailed`/`formal` + custom
     per-workspace presets; `--preset` / run form / workspace default. Style-only:

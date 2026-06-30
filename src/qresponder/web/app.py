@@ -79,6 +79,7 @@ class _Job:
         self.events: list = []            # live progress events (Phase 8 D dashboard)
         self.n_files = 1                  # for batch dashboards
         self.zip_name: str | None = None  # batch zip artifact
+        self.workspace_id: str | None = None  # owning workspace (Phase 8 E)
 
 
 class AcceptBody(BaseModel):
@@ -114,6 +115,7 @@ def create_app(config: Config | None = None, model_fetch=None) -> FastAPI:
     app = FastAPI(title="QRESPONDER review UI")
     jobs: dict[str, _Job] = {}
     app.state.jobs = jobs  # test seam
+    resolved: dict[tuple, str] = {}  # (wid, question) -> answer, for idempotent resolve
     app.state.model_fetch = model_fetch  # injectable HTTP fetcher for model lists (tests)
     store = WorkspaceStore(config.extra.get("workspaces_dir") or config.workspaces_dir)
     app.state.store = store
@@ -411,6 +413,82 @@ def create_app(config: Config | None = None, model_fetch=None) -> FastAPI:
         ws = _ws(wid)
         return check_library(ws.qa_path, config=config)
 
+    # ---- cross-file flagged aggregation + one-click resolve (Phase 8 E) ----
+    def _ws_flagged(wid: str):
+        """All NEEDS_REVIEW items across this workspace's finished runs."""
+        occ = []
+        for rid, job in jobs.items():
+            if job.workspace_id != wid or job.result is None:
+                continue
+            fname = Path(job.questionnaire_path).name if job.questionnaire_path else rid
+            for r in job.result.results:
+                if r.status == Status.NEEDS_REVIEW:
+                    occ.append((rid, job, r, fname))
+        return occ
+
+    @app.get("/api/workspaces/{wid}/flagged")
+    def flagged(wid: str):
+        from ..kb.base import lexical_similarity
+
+        _ws(wid)
+        floor = getattr(config, "dedup_threshold", 0.9)
+        groups: list[dict] = []
+        for rid, job, r, fname in _ws_flagged(wid):
+            o = {"run_id": rid, "qid": r.question_id, "file": fname}
+            placed = False
+            for g in groups:
+                if lexical_similarity(r.question_text, g["question"]) >= floor:
+                    g["occurrences"].append(o)
+                    if not g["draft"] and r.answer:
+                        g["draft"] = r.answer
+                    placed = True
+                    break
+            if not placed:
+                groups.append({"question": r.question_text, "reason": r.review_reason.value,
+                               "draft": r.answer or "", "occurrences": [o]})
+        for g in groups:
+            g["count"] = len(g["occurrences"])
+            g["files"] = sorted({o["file"] for o in g["occurrences"]})
+        return {"groups": groups}
+
+    @app.post("/api/workspaces/{wid}/flagged/resolve")
+    def resolve_flagged(wid: str, body: dict = Body(...)):
+        from ..kb.base import lexical_similarity
+        from ..models import Citation, Confidence
+
+        ws = _ws(wid)
+        floor = getattr(config, "dedup_threshold", 0.9)
+        q = str(body.get("question", "")).strip()
+        a = str(body.get("answer", "")).strip()
+        if not q or not a:
+            raise HTTPException(status_code=400, detail="question and answer are required")
+
+        updated, files, touched = 0, set(), set()
+        for rid, job, r, fname in _ws_flagged(wid):
+            if lexical_similarity(r.question_text, q) >= floor:
+                r.status = Status.ANSWERED
+                r.answer = a
+                r.review_reason = ReviewReason.NONE
+                r.conflict_with = None
+                r.confidence = Confidence.HIGH
+                r.citations = [Citation(source="cross-file resolve (human)", snippet=a, faithful=True)]
+                updated += 1
+                files.add(fname)
+                touched.add(rid)
+        for rid in touched:
+            _persist(jobs[rid])
+
+        # Train the library ONCE (idempotent per workspace+question — no spurious
+        # version bumps on re-resolve with the same text).
+        key = (wid, q.lower())
+        trained, library = False, None
+        if resolved.get(key) != a:
+            library = approve_one(q, a, ws.qa_path,
+                                  approved_by=body.get("approved_by") or "cross-file", tags=body.get("tags"))
+            resolved[key] = a
+            trained = True
+        return {"updated": updated, "files": sorted(files), "trained": trained, "library": library}
+
     # ---- per-workspace settings -------------------------------------------
     @app.get("/api/workspaces/{wid}/settings")
     def get_settings(wid: str):
@@ -473,6 +551,7 @@ def create_app(config: Config | None = None, model_fetch=None) -> FastAPI:
             preset=preset_name if style else None, style=style, provider_obj=provider_obj,
         )
         jobs[run_id].review_markers = bool(settings.get("review_markers", True))
+        jobs[run_id].workspace_id = wid
         return {"run_id": run_id, "workspace": wid}
 
     # ---- workspace batch (Part D) -----------------------------------------

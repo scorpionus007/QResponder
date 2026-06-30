@@ -352,6 +352,14 @@ conflicting source named. It's conservative (no false-positive noise), never
 auto-resolves (both sides surfaced), and never flags or overrides an approved
 Tier-1 answer.
 
+## Cross-file flagged resolve
+
+When the same unresolved question appears across many files, the **Flagged** tab
+groups it once (by similarity), shows where it appears and a suggested grounded
+draft, and lets you **answer it once → inserted into every affected file** and
+saved to the Answer Library (one versioned entry, not N). Idempotent, and it
+respects every write-back guard.
+
 ## Live processing dashboard
 
 Batch-process many questionnaires and watch the **grounded** pipeline in real
