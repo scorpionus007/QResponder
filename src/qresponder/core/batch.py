@@ -69,6 +69,8 @@ def run_batch(
     scope_tags=None,
     evidence_dir: str | None = None,
     provider: LLMProvider | None = None,
+    on_event=None,
+    review_markers: bool = True,
 ) -> dict:
     """Run each file isolated; return a batch summary. Failures don't abort."""
     provider = provider or make_provider(config)
@@ -79,9 +81,9 @@ def run_batch(
         fp = Path(fp)
         sub = out_root / fp.stem
         try:
-            result = run_pipeline(str(fp), kb_dir, qa_path, config,
-                                  scope_tags=scope_tags, provider=provider, evidence_dir=evidence_dir)
-            write_all(result, sub)
+            result = run_pipeline(str(fp), kb_dir, qa_path, config, scope_tags=scope_tags,
+                                  provider=provider, evidence_dir=evidence_dir, on_event=on_event)
+            write_all(result, sub, review_markers=review_markers)
             per_file.append({"file": fp.name, "ok": True, "out_dir": str(sub),
                              "summary": _file_summary(result)})
         except Exception as exc:  # noqa: BLE001 - isolate per-file failures

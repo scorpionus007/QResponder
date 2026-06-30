@@ -352,6 +352,18 @@ conflicting source named. It's conservative (no false-positive noise), never
 auto-resolves (both sides surfaced), and never flags or overrides an approved
 Tier-1 answer.
 
+## Live processing dashboard
+
+Batch-process many questionnaires and watch the **grounded** pipeline in real
+time: a command-center **tracker** (files done / total · matched Tier-1 ·
+generated · flagged · errors, with live progress bars) and a streaming **"AI
+thinking" console** — timestamped lines for parsing, retrieval (top score),
+each per-question decision (reuse / generate / abstain + confidence),
+faithfulness pass/fail, and flags. The engine emits structured events
+(`on_event`); the UI streams them over SSE. On completion you get the batch
+summary, a **ZIP of the format-preserving filled originals**, and a link to the
+audit pack. All local assets, no CDN.
+
 ## Accuracy & consistency (Part G)
 
 - **Consistency over time** — a new answer that contradicts a *prior submission*

@@ -173,12 +173,17 @@ def orchestrate(
     history=None,
     preset: str | None = None,
     style: str | None = None,
+    on_event=None,
 ) -> list[AnswerResult]:
     from ..models import AuditTrail, RetrievedCandidate
     from .confidence import confidence_rationale, decide_confidence, grounding_score
     from .conflicts import detect_conflicts, detect_history_conflicts
     from .faithfulness import verify_results
     from .interpretations import answer_interpretations
+
+    def E(etype: str, **data):
+        if on_event:
+            on_event({"type": etype, **data})
 
     results: dict[str, AnswerResult] = {}
     to_generate: list[Question] = []
@@ -211,6 +216,7 @@ def orchestrate(
 
     n_lib = n_suggest = n_attach = n_ambig = 0
     for q in questions:
+        E("question_started", id=q.id, text=q.text[:140])
         if q.answer_type == AnswerType.ATTACHMENT:
             if evidence is not None:
                 from .attachments import resolve_attachment
@@ -219,6 +225,7 @@ def orchestrate(
             else:
                 results[q.id] = _attachment_result(q)
             n_attach += 1
+            E("attachment", id=q.id)
             continue
         hit = library.match(q.text, scope_tags=scope_tags)
         if hit is not None:
@@ -226,14 +233,19 @@ def orchestrate(
             if score >= AUTO_REUSE_THRESHOLD:
                 results[q.id] = _library_reuse_result(q, entry, score)
                 n_lib += 1
+                E("tier1_reuse", id=q.id, score=round(float(score), 3))
             else:
                 results[q.id] = _library_suggest_result(q, entry, score)
                 n_suggest += 1
+                E("library_candidate", id=q.id, score=round(float(score), 3))
             continue
         if q.ambiguous and len(q.interpretations) >= 2:
             ambiguous_questions.append(q)
             continue
         to_generate.append(q)
+
+    for q in ambiguous_questions:
+        E("ambiguous", id=q.id, interpretations=len(q.interpretations))
 
     # Ambiguous questions: draft one grounded answer per interpretation (C1).
     for q in ambiguous_questions:
@@ -276,14 +288,17 @@ def orchestrate(
         for q in to_generate:
             hits = _retrieve(q)
             ctx = "\n\n".join(f"[source: {c.source}] {c.text}" for c, _ in hits)
-            retrieval_score[q.id] = hits[0][1] if hits else None
+            top = hits[0][1] if hits else None
+            retrieval_score[q.id] = top
             retrieved_map[q.id] = [
                 RetrievedCandidate(source=c.source, snippet=c.text, score=round(float(s), 4))
                 for c, s in hits
             ]
+            E("retrieved", id=q.id, k=len(hits), top_score=round(float(top), 3) if top is not None else None)
             for r in answer_batch(provider, ctx, [_payload(q)], style=style):
                 results[r.question_id] = r
                 generated.append(r)
+                E("generated", id=r.question_id)
     else:
         # In-context mode: one shared, tag-scoped context; batched answering.
         batch_size = max(1, config.batch_size)
@@ -293,6 +308,7 @@ def orchestrate(
                 results[r.question_id] = r
                 generated.append(r)
                 retrieval_score.setdefault(r.question_id, None)
+                E("generated", id=r.question_id)
 
     # Faithfulness / citation verification (mutates generated results; F5 exempts
     # Tier-1, which never enters `generated`).
@@ -444,9 +460,17 @@ def orchestrate(
             r.location_hint = q.location_hint
             r.answer_location_hint = q.answer_location_hint
 
-    # Preserve original order.
+    # Preserve original order + emit the per-question trace (Part D dashboard).
+    gen_ids = {r.question_id for r in generated}
     ordered: list[AnswerResult] = []
     for q in questions:
-        if q.id in results:
-            ordered.append(results[q.id])
+        if q.id not in results:
+            continue
+        r = results[q.id]
+        if r.question_id in gen_ids and r.audit and r.audit.faithfulness:
+            E("faithfulness", id=r.question_id, passed=bool(r.audit.faithfulness.get("passed")))
+        if r.status == Status.NEEDS_REVIEW:
+            E("flagged", id=r.question_id, reason=r.review_reason.value)
+        E("question_done", id=r.question_id, status=r.status.value, confidence=r.confidence.value)
+        ordered.append(r)
     return ordered

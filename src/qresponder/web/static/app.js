@@ -238,7 +238,76 @@ function answerView(view, wid) {
   card.append(el("div", { class: "form" }, el("label", { class: "field" }, "Questionnaire file", file),
     el("div", { class: "row" }, el("label", { class: "field" }, "Tags", tags), el("label", { class: "field" }, "Mode", mode)),
     el("div", { class: "btn-row" }, run), progress, err));
-  view.append(card, reviewHost);
+
+  // Live batch dashboard launcher.
+  const batchFiles = el("input", { type: "file", multiple: "multiple", accept: ".xlsx,.xlsm,.docx,.pdf" });
+  const dashHost = el("div", {});
+  const batchBtn = el("button", { class: "btn", onclick: async () => {
+    if (!batchFiles.files.length) return;
+    const fd = new FormData();
+    for (const f of batchFiles.files) fd.append("files", f);
+    try {
+      const r = await api(`/api/workspaces/${wid}/batch-stream`, { method: "POST", body: fd });
+      renderDashboard(dashHost, r.batch_id, r.n_files);
+    } catch (e) { dashHost.replaceChildren(el("div", { class: "error" }, e.message)); }
+  } }, "Run batch (live dashboard)");
+  const batchCard = el("div", { class: "card" }, el("h2", {}, "Batch — live command center"),
+    el("p", { class: "muted" }, "Process many files at once and watch the grounded pipeline in real time."),
+    el("label", { class: "field" }, "Questionnaire files", batchFiles),
+    el("div", { class: "btn-row" }, batchBtn));
+
+  view.append(card, reviewHost, batchCard, dashHost);
+}
+
+// --- live processing dashboard (Phase 8 D) ---
+function renderDashboard(host, batchId, nFiles) {
+  const counts = { files_done: 0, tier1: 0, generated: 0, flagged: 0, errors: 0 };
+  const stat = (label, id) => el("div", { class: "dash-stat" }, el("b", { id: "ds-" + id }, "0"),
+    el("span", { class: "dash-label" }, label));
+  const tracker = el("div", { class: "dash-tracker" },
+    el("div", { class: "dash-stat" }, el("b", { id: "ds-files" }, "0/" + nFiles), el("span", { class: "dash-label" }, "files")),
+    stat("matched (Tier-1)", "tier1"), stat("generated", "generated"),
+    stat("flagged", "flagged"), stat("errors", "errors"));
+  const consoleBox = el("div", { class: "dash-console" });
+  const bar = el("div", { class: "dash-bar" }, el("div", { class: "dash-bar-fill", id: "dash-fill" }));
+  const done = el("div", { class: "dash-done" });
+  host.replaceChildren(el("div", { class: "dash card" },
+    el("h2", {}, "Processing"), tracker, bar, el("h4", { class: "dash-h" }, "AI thinking"), consoleBox, done));
+
+  const set = (id, v) => { const e = $("ds-" + id); if (e) e.textContent = v; };
+  const line = (cls, text) => {
+    const t = new Date().toLocaleTimeString();
+    consoleBox.append(el("div", { class: "cline " + (cls || "") }, el("span", { class: "cts" }, t + " "), text));
+    consoleBox.scrollTop = consoleBox.scrollHeight;
+  };
+
+  const es = new EventSource(`/api/runs/${batchId}/stream`);
+  es.onmessage = (ev) => {
+    const e = JSON.parse(ev.data);
+    switch (e.type) {
+      case "file_started": line("", `▶ ${e.file} — started`); break;
+      case "parsed": line("", `parsed ${e.questions} question(s)`); break;
+      case "retrieved": line("dim", `  retrieved k=${e.k} top=${e.top_score ?? "—"}`); break;
+      case "tier1_reuse": counts.tier1++; set("tier1", counts.tier1); line("ok", `  ✓ reused approved answer (Tier-1)`); break;
+      case "generated": counts.generated++; set("generated", counts.generated); break;
+      case "faithfulness": line(e.passed ? "ok" : "bad", `  faithfulness ${e.passed ? "PASS" : "FAIL"}`); break;
+      case "flagged": counts.flagged++; set("flagged", counts.flagged); line("warn", `  ⚠ flagged: ${(e.reason||"").replace(/_/g," ")}`); break;
+      case "question_done": line(e.confidence === "high" ? "ok" : e.confidence === "low" ? "bad" : "warn", `  · ${e.status} (${e.confidence})`); break;
+      case "file_done":
+        counts.files_done++; set("files", counts.files_done + "/" + nFiles);
+        const fill = $("dash-fill"); if (fill) fill.style.width = Math.round(100 * counts.files_done / nFiles) + "%";
+        line("ok", `■ ${e.file} done — ${e.answered} answered, ${e.flagged} flagged`); break;
+      case "error": counts.errors++; set("errors", counts.errors); line("bad", `✗ error: ${e.error}`); break;
+      case "_end":
+        es.close();
+        api(`/api/runs/${batchId}/events`).then((snap) => {
+          done.replaceChildren(el("div", { class: "ok-msg" }, "Batch complete."),
+            snap.zip ? el("a", { class: "btn primary", href: `/api/runs/${batchId}/download/${snap.zip}`, download: snap.zip }, "Download filled originals (ZIP)") : el("span"));
+        });
+        break;
+    }
+  };
+  es.onerror = () => { line("bad", "stream closed"); es.close(); };
 }
 
 async function poll(runId, host, progress, err) {

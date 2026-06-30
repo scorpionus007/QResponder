@@ -23,6 +23,14 @@ versioning.
   **per file with a reason** (no abort). Approved answers from CSV/JSON/XLSX/MD/
   two-column DOCX (`core/qa_import.py`) routed through `approve_one` (dedup/
   version). KB loader extended to read HTML/XLSX/CSV.
+- **Live processing dashboard (Phase 8 D).** `run_pipeline`/`orchestrate` emit
+  structured progress events (file_started, parsed, question_started, retrieved,
+  tier1_reuse/generated/attachment, faithfulness, flagged, question_done,
+  file_done, error) via an `on_event` callback — thin, around the existing engine.
+  `GET /api/runs/{id}/events` (snapshot) + `/stream` (SSE); a background
+  `/api/workspaces/{id}/batch-stream`. A vanilla command-center dashboard (tracker
+  + monospace "AI thinking" console, no CDN) renders the grounded path live and
+  links the filled-originals ZIP on completion.
 - **Competitor-parity phase (Phase 7).**
   - **Answer-style presets** — built-in `concise`/`detailed`/`formal` + custom
     per-workspace presets; `--preset` / run form / workspace default. Style-only:

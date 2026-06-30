@@ -76,6 +76,9 @@ class _Job:
         self.style: str | None = None     # resolved preset instructions
         self.review_markers: bool = True  # mark NEEDS_REVIEW cells on export (Phase 7 C)
         self.provider_obj = None          # explicit LLM provider (Phase 8) — no mock fallback
+        self.events: list = []            # live progress events (Phase 8 D dashboard)
+        self.n_files = 1                  # for batch dashboards
+        self.zip_name: str | None = None  # batch zip artifact
 
 
 class AcceptBody(BaseModel):
@@ -116,6 +119,11 @@ def create_app(config: Config | None = None, model_fetch=None) -> FastAPI:
     app.state.store = store
 
     # ---- run machinery (shared by legacy + workspace runs) -----------------
+    def _emit(job: _Job, event: dict):
+        import time
+
+        job.events.append({"t": round(time.time(), 3), **event})
+
     def _run(job: _Job, kb, evidence, qa, cfg: Config):
         job.status = "running"
         try:
@@ -123,6 +131,7 @@ def create_app(config: Config | None = None, model_fetch=None) -> FastAPI:
                 job.questionnaire_path, kb, qa, cfg,
                 scope_tags=job.tags, evidence_dir=evidence, history=job.history,
                 preset=job.preset, style=job.style, provider=job.provider_obj,
+                on_event=lambda e: _emit(job, e),
             )
             job.result = result
             _persist(job)
@@ -517,6 +526,75 @@ def create_app(config: Config | None = None, model_fetch=None) -> FastAPI:
             payload["results"] = [r.model_dump() for r in job.result.results]
             payload["approved"] = list(job.approved.keys())
         return payload
+
+    # ---- live processing dashboard (Phase 8 D) ----------------------------
+    @app.get("/api/runs/{run_id}/events")
+    def run_events(run_id: str):
+        """Snapshot of progress events (the dashboard can poll this or use /stream)."""
+        job = _get_job(run_id)
+        return {"status": job.status, "error": job.error, "n_files": job.n_files,
+                "zip": job.zip_name, "events": job.events,
+                "summary": _summary(job.result) if job.result is not None else None}
+
+    @app.get("/api/runs/{run_id}/stream")
+    def run_stream(run_id: str):
+        import json
+        import time
+
+        from fastapi.responses import StreamingResponse
+
+        job = _get_job(run_id)
+
+        def gen():
+            i = 0
+            while True:
+                while i < len(job.events):
+                    yield f"data: {json.dumps(job.events[i])}\n\n"
+                    i += 1
+                if job.status in ("done", "error"):
+                    yield f"data: {json.dumps({'type': '_end', 'status': job.status})}\n\n"
+                    return
+                time.sleep(0.05)
+
+        return StreamingResponse(gen(), media_type="text/event-stream")
+
+    @app.post("/api/workspaces/{wid}/batch-stream")
+    async def ws_batch_stream(wid: str, files: list[UploadFile], provider: str = Form(None),
+                              model: str = Form(None)):
+        """Background batch with a live event stream for the dashboard."""
+        from ..core.batch import run_batch, zip_batch
+
+        ws = _ws(wid)
+        cfg = ws.effective_config(config)
+        provider_obj = _build_provider(provider, model or ws.load_settings().get("model"))
+        batch_id = "batch_" + uuid.uuid4().hex[:10]
+        out_dir = ws.runs_dir / batch_id
+        in_dir = out_dir / "_in"
+        in_dir.mkdir(parents=True, exist_ok=True)
+        saved = []
+        for f in files:
+            dest = in_dir / _safe_filename(f.filename or "questionnaire")
+            dest.write_bytes(await f.read())
+            saved.append(dest)
+        job = _Job(batch_id, out_dir, str(ws.qa_path), ws.default_tags())
+        job.n_files = len(saved)
+        jobs[batch_id] = job
+
+        def _go():
+            job.status = "running"
+            try:
+                run_batch(saved, str(ws.kb_dir), str(ws.qa_path), cfg, out_dir,
+                          scope_tags=ws.default_tags(), evidence_dir=str(ws.evidence_dir),
+                          provider=provider_obj, on_event=lambda e: _emit(job, e))
+                job.zip_name = Path(zip_batch(out_dir)).name
+                job.status = "done"
+            except Exception as exc:  # noqa: BLE001
+                job.error = str(exc)
+                job.status = "error"
+
+        threading.Thread(target=_go, daemon=True).start()
+        return {"batch_id": batch_id, "n_files": len(saved),
+                "stream": f"/api/runs/{batch_id}/stream", "events": f"/api/runs/{batch_id}/events"}
 
     @app.post("/api/runs/{run_id}/items/{qid}/accept")
     def accept(run_id: str, qid: str, body: AcceptBody):

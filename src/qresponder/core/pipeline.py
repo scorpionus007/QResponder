@@ -31,40 +31,53 @@ def run_pipeline(
     history=None,
     preset: str | None = None,
     style: str | None = None,
+    on_event=None,
 ) -> QuestionnaireResult:
+    import os
+
     provider = provider or make_provider(config)
+    fname = os.path.basename(str(questionnaire_path))
 
-    log.info("Ingesting %s", questionnaire_path)
-    doc = load_document(questionnaire_path)
+    def E(etype, **data):
+        if on_event:
+            on_event({"type": etype, "file": fname, **data})
 
-    log.info("Extracting questions")
-    questions = extract_questions(doc, provider)
+    try:
+        E("file_started", file=fname)
+        log.info("Ingesting %s", questionnaire_path)
+        doc = load_document(questionnaire_path)
 
-    library = AnswerLibrary.load(qa_path)
-    if config.kb_mode == "retrieval":
-        from ..kb.retrieval import RetrievalKB
+        log.info("Extracting questions")
+        questions = extract_questions(doc, provider)
+        E("parsed", questions=len(questions))
 
-        kb = RetrievalKB.load(kb_dir, config)
-    else:
-        kb = InContextKB.load(kb_dir)
+        library = AnswerLibrary.load(qa_path)
+        if config.kb_mode == "retrieval":
+            from ..kb.retrieval import RetrievalKB
 
-    # Evidence vault for attachment resolution (C2), if configured.
-    evidence = None
-    ev_dir = evidence_dir or config.evidence_dir
-    if ev_dir:
-        from ..kb.evidence import EvidenceIndex
+            kb = RetrievalKB.load(kb_dir, config)
+        else:
+            kb = InContextKB.load(kb_dir)
 
-        evidence = EvidenceIndex.load(ev_dir)
+        evidence = None
+        ev_dir = evidence_dir or config.evidence_dir
+        if ev_dir:
+            from ..kb.evidence import EvidenceIndex
 
-    log.info("Answering %d question(s)", len(questions))
-    results = orchestrate(
-        questions, provider, library, kb, config,
-        scope_tags=scope_tags, evidence=evidence, history=history,
-        preset=preset, style=style,
-    )
+            evidence = EvidenceIndex.load(ev_dir)
+
+        log.info("Answering %d question(s)", len(questions))
+        results = orchestrate(
+            questions, provider, library, kb, config,
+            scope_tags=scope_tags, evidence=evidence, history=history,
+            preset=preset, style=style, on_event=on_event,
+        )
+    except Exception as exc:  # noqa: BLE001 - surface as an event, then re-raise
+        E("error", error=str(exc))
+        raise
 
     answered = sum(1 for r in results if r.status == Status.ANSWERED)
     flagged = len(results) - answered
     log.info("Done: %d answered, %d flagged for review", answered, flagged)
-
+    E("file_done", answered=answered, flagged=flagged)
     return QuestionnaireResult(source_file=str(questionnaire_path), results=results)
