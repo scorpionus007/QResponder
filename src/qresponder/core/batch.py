@@ -52,11 +52,22 @@ def resolve_questionnaires(patterns: list[str]) -> list[Path]:
 def _file_summary(result) -> dict:
     answered = [r for r in result.results if r.status == Status.ANSWERED]
     flagged = [r for r in result.results if r.status == Status.NEEDS_REVIEW]
+    # Additive bookkeeping (Phase 11 E): model_calls is exact — every result NOT
+    # served from the Tier-1 library (source_tier 1) required a generation call.
+    # tokens_est is a labeled char/4 estimate, since providers don't report usage.
+    model_calls = sum(1 for r in result.results if (r.source_tier or 0) != 1)
+    kb_direct = sum(1 for r in answered if (r.source_tier or 0) == 1)
+    chars = sum(len(r.question_text or "") + len(r.answer or "") for r in result.results)
+    high = sum(1 for r in answered if r.confidence.value == "high")
     return {
         "total": len(result.results),
         "answered": len(answered),
         "flagged": len(flagged),
         "by_reason": dict(Counter(r.review_reason.value for r in flagged)),
+        "auto_answered_high": high,
+        "matched_tier1": kb_direct,
+        "model_calls": model_calls,
+        "tokens_est": chars // 4,  # estimate — providers don't report usage locally
     }
 
 

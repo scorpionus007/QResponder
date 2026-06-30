@@ -416,6 +416,33 @@ def create_app(config: Config | None = None, model_fetch=None) -> FastAPI:
         res["total"] = len(AnswerLibrary.load(ws.qa_path).entries)
         return res
 
+    @app.get("/api/workspaces/{wid}/qa/export")
+    def export_qa(wid: str, fmt: str = "csv"):
+        """Export the whole answer library as CSV or JSON (download). Read-only."""
+        import csv
+        import io
+        import json as _json
+
+        ws = _ws(wid)
+        entries = AnswerLibrary.load(ws.qa_path).entries
+        fmt = (fmt or "csv").lower()
+        if fmt == "json":
+            payload = [{"question": e.question, "answer": e.answer, "category": (e.tags[0] if e.tags else ""),
+                        "tags": e.tags, "version": e.version} for e in entries]
+            from fastapi.responses import Response
+
+            return Response(_json.dumps(payload, indent=2), media_type="application/json",
+                            headers={"Content-Disposition": 'attachment; filename="qa_library.json"'})
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(["category", "question", "answer", "tags"])
+        for e in entries:
+            w.writerow([(e.tags[0] if e.tags else ""), e.question, e.answer, "; ".join(e.tags)])
+        from fastapi.responses import Response
+
+        return Response(buf.getvalue(), media_type="text/csv",
+                        headers={"Content-Disposition": 'attachment; filename="qa_library.csv"'})
+
     @app.put("/api/workspaces/{wid}/qa/{index}")
     def edit_qa(wid: str, index: int, body: dict = Body(...)):
         ws = _ws(wid)
@@ -453,6 +480,15 @@ def create_app(config: Config | None = None, model_fetch=None) -> FastAPI:
 
         ws = _ws(wid)
         return check_library(ws.qa_path, config=config)
+
+    @app.post("/api/workspaces/{wid}/kb-check/merge")
+    def kb_check_merge(wid: str):
+        """Opt-in: version-bump the canonical of each near-duplicate via approve_one.
+        Never deletes; contradictions are never auto-merged (human resolves)."""
+        from ..core.kb_health import merge_duplicates
+
+        ws = _ws(wid)
+        return merge_duplicates(ws.qa_path, config=config)
 
     # ---- cross-file flagged aggregation + one-click resolve (Phase 8 E) ----
     def _ws_flagged(wid: str):
@@ -529,6 +565,67 @@ def create_app(config: Config | None = None, model_fetch=None) -> FastAPI:
             resolved[key] = a
             trained = True
         return {"updated": updated, "files": sorted(files), "trained": trained, "library": library}
+
+    @app.get("/api/workspaces/{wid}/flagged/export")
+    def export_flagged_ws(wid: str):
+        """Export still-flagged groups as the Phase-6 round-trip CSV (download).
+        Fill the blank answer cells, import from Entries, then Sync with KB."""
+        import csv
+        import io
+
+        from ..kb.base import lexical_similarity
+
+        _ws(wid)
+        floor = getattr(config, "dedup_threshold", 0.9)
+        groups: list[dict] = []
+        for rid, job, r, fname in _ws_flagged(wid):
+            placed = False
+            for g in groups:
+                if lexical_similarity(r.question_text, g["question"]) >= floor:
+                    g["files"].add(fname)
+                    placed = True
+                    break
+            if not placed:
+                groups.append({"category": "", "question": r.question_text, "answer": r.answer or "",
+                               "reason": r.review_reason.value, "files": {fname}})
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(["category", "question", "answer", "reason", "files"])
+        for g in groups:
+            w.writerow([g["category"], g["question"], g["answer"], g["reason"], "; ".join(sorted(g["files"]))])
+        from fastapi.responses import Response
+
+        return Response(buf.getvalue(), media_type="text/csv",
+                        headers={"Content-Disposition": 'attachment; filename="flagged.csv"'})
+
+    @app.post("/api/workspaces/{wid}/flagged/sync")
+    def sync_flagged(wid: str):
+        """Re-match still-flagged items against the (now-updated) library and clear
+        the ones that now have an approved answer — the CSV round-trip's last step.
+        Reuses the same Tier-1 reuse band as the engine; never fabricates."""
+        from ..kb.library import AUTO_REUSE_THRESHOLD, AnswerLibrary
+        from ..models import Citation, Confidence
+
+        ws = _ws(wid)
+        lib = AnswerLibrary.load(ws.qa_path)
+        cleared, files, touched = 0, set(), set()
+        for rid, job, r, fname in _ws_flagged(wid):
+            hit = lib.match(r.question_text, threshold=AUTO_REUSE_THRESHOLD)
+            if hit is not None:
+                entry, _score = hit
+                r.status = Status.ANSWERED
+                r.answer = entry.answer
+                r.review_reason = ReviewReason.NONE
+                r.conflict_with = None
+                r.confidence = Confidence.HIGH
+                r.source_tier = 1
+                r.citations = [Citation(source="answer library (synced)", snippet=entry.answer, faithful=True)]
+                cleared += 1
+                files.add(fname)
+                touched.add(rid)
+        for rid in touched:
+            _persist(jobs[rid])
+        return {"cleared": cleared, "files": sorted(files)}
 
     # ---- per-workspace settings -------------------------------------------
     @app.get("/api/workspaces/{wid}/settings")
@@ -851,6 +948,41 @@ def create_app(config: Config | None = None, model_fetch=None) -> FastAPI:
         if not fp.exists():
             raise HTTPException(status_code=404, detail="artifact not found")
         return FileResponse(str(fp), filename=fp.name)
+
+    @app.get("/api/runs/{run_id}/files")
+    def batch_files(run_id: str):
+        """Per-file results for a batch (Phase 11 E) — from batch_summary.json."""
+        import json
+
+        job = _get_job(run_id)
+        summ = job.out_dir / "batch_summary.json"
+        if not summ.exists():
+            return {"files": []}
+        data = json.loads(summ.read_text(encoding="utf-8"))
+        out = []
+        for f in data.get("files", []):
+            stem = Path(f["file"]).stem
+            sub = job.out_dir / stem
+            # The filled original (write-back) if present, else the answered.* draft.
+            artifact = None
+            if sub.exists():
+                pref = sorted(sub.glob("*answered.*")) or [p for p in sorted(sub.iterdir()) if p.is_file()]
+                if pref:
+                    artifact = f"{stem}/{pref[0].name}"
+            out.append({**f, "stem": stem, "artifact": artifact})
+        return {"files": out}
+
+    @app.get("/api/runs/{run_id}/files/{stem}/download")
+    def download_file(run_id: str, stem: str):
+        """Download one batch file's filled original / answered draft."""
+        job = _get_job(run_id)
+        sub = job.out_dir / Path(stem).name  # sanitize
+        if not sub.is_dir():
+            raise HTTPException(status_code=404, detail="file not found")
+        pref = sorted(sub.glob("*answered.*")) or [p for p in sorted(sub.iterdir()) if p.is_file()]
+        if not pref:
+            raise HTTPException(status_code=404, detail="no output for that file")
+        return FileResponse(str(pref[0]), filename=pref[0].name)
 
     if _STATIC_DIR.exists():
         app.mount("/", StaticFiles(directory=str(_STATIC_DIR), html=True), name="static")
