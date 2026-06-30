@@ -67,8 +67,34 @@ and **local-model users need no key at all** — point `.env` at Ollama/vLLM and
 the wizard's *Run locally (private, no key)* path is the zero-config default.
 
 > _Launch asset: run `qresponder serve`, walk the wizard, and capture the
-> wizard + review screens → `docs/wizard.png` / `docs/review-ui.png`. (Not
-> committed — per-environment.)_
+> dashboard screens → `docs/wizard.png`, `docs/kb.png`, `docs/upload.png`,
+> `docs/processing.png`, `docs/results.png`. (Not committed — per-environment.)_
+
+### The dashboard (Phase 11)
+
+A polished, dark **command-center** UI with a persistent top nav — **Upload ·
+Knowledge Base · Settings** — a live model-status pill (green ● `provider/model`
+when reachable, red + reason when not; **name only, never a key**), and a
+workspace switcher. No login, no account — it stays a local, single-user tool.
+
+- **Upload** — pick the provider/model for *this* batch (live list from your
+  configured providers; an unreachable one blocks the run, no mock fallback),
+  an optional **preset** (style only — never changes what's grounded), then
+  drag-and-drop up to 50 files (`.docx/.pdf/.xlsx/.csv`, validated per file).
+- **Live processing** — a batch card with a progress bar and an **"AI Thinking"**
+  console streaming the *real* pipeline events (parser → retrieval → Tier-1
+  reuse → generate → faithfulness → flagged → file done), live stat tiles
+  (files / completed / in-progress / errors / matched Tier-1 / flagged), and on
+  completion **Download all results (.zip)** + an audit pack.
+- **Batch results** — one row per file (DONE / NEEDS REVIEW), with answered /
+  flagged / KB-direct / model-calls / ~tokens (est) and a per-file **Download**
+  of the filled original.
+- **Knowledge Base** — three tabs: **Entries** (Total / Categories cards, search +
+  category filter, Add/Edit modal, Import, Export CSV/JSON), **Flagged** (cross-file
+  groups → *Provide Answer* resolves everywhere and trains the library once;
+  Export CSV → fill → Import → **Sync with KB** clears matched), and **Duplicates**
+  (a `kb-check` scan; opt-in merge version-bumps the canonical, never deletes;
+  contradictions are shown for you to resolve).
 
 ### Workspaces
 
@@ -95,17 +121,14 @@ to move them.
 
 ### The review loop (this is the product)
 
-Each answer shows a confidence chip (green/amber/red), a status/reason badge, and
-expandable citations. Flagged items get the right panel: an **interpretation
-picker** (ambiguous), an **attachment confirm** (evidence), a **library-candidate**
-accept/reject, or a **conflict** side-by-side to reconcile. On **Accept / Edit +
-Accept**, the flywheel kicks in: **every accept trains that workspace's Answer
-Library** (edits train on the edited text), shown by an "added to library" badge.
-**Export** writes `answered.xlsx` + `results.json` + `review.md` and fills a copy
-of your original template. Nothing is auto-submitted — the human gate is the point.
-
-A persistent **Settings** page per workspace lets you manage all of the above
-later; empty states teach (the KB panel *is* the instruction until you add docs).
+Process a batch on **Upload**, then resolve what's flagged on **Knowledge Base →
+Flagged**: each unresolved question is grouped across every file it appears in,
+and *Provide Answer* writes it into all of them **and trains the workspace Answer
+Library once** (idempotent — one versioned entry, not N). The filled originals
+download from the batch results; nothing is auto-submitted — the human gate is the
+point. A persistent **Settings** page per workspace manages the model, KB docs,
+evidence, engine behavior, analytics, and danger zone; empty states teach (the KB
+panel *is* the instruction until you add docs).
 
 ### Security — read this before exposing it
 
@@ -529,6 +552,10 @@ tag-scoped so GDPR questions don't pull SOC 2 evidence.
 - **Phase 5** — guided setup wizard + multi-workspace asset management:
   create/switch workspaces, upload & tag KB/evidence, CRUD approved answers, edit
   engine settings — all from the browser; only the API key stays in `.env`. ✅
+- **Phase 11** — polished multi-page dashboard (Upload · Knowledge Base ·
+  Settings): live model picker, multi-file upload, "AI Thinking" live processing,
+  per-file batch results, and the KB Entries/Flagged/Duplicates management page —
+  a presentation layer that moves no answering logic. ✅
 
 **Deliberately out of scope** (with rationale): Tier-4 prior-submission mining
 (the flywheel already promotes accepted answers to higher-authority Tier-1);

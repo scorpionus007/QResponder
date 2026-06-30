@@ -7,6 +7,34 @@ versioning.
 ## [Unreleased]
 
 ### Added
+- **Polished dashboard UI (Phase 11).** A dark command-center web UI over the
+  existing engine — **reimplements no answering logic**; the single grounded path
+  stays the only path. Persistent top nav (**Upload · Knowledge Base · Settings**),
+  a live model-status pill (name only, never a key), no login/account.
+  - **Upload** — per-batch live provider/model picker (configured providers only;
+    unreachable blocks the run, no mock fallback), Phase-7 presets (style only),
+    multi-file drag-drop with per-file type validation, Recent Uploads.
+  - **Live processing** — batch card + progress bar, an **"AI Thinking"** SSE
+    console driven by the *real* pipeline events (no faked competitor log lines),
+    live stat tiles, **Download all results (.zip)** + audit pack.
+  - **Batch results** — per-file rows (DONE / NEEDS REVIEW) with answered/flagged/
+    KB-direct/model-calls/~tokens(est) and a per-file download of the filled
+    original. New additive endpoints `GET /api/runs/{id}/files` +
+    `…/files/{stem}/download`; batch `_file_summary` gains exact `model_calls` and
+    a labeled `tokens_est`.
+  - **Knowledge Base** — three tabs. **Entries** (Total/Categories cards, search +
+    category filter, Add/Edit modal routed through the library write, Import, and
+    new `GET …/qa/export?fmt=csv|json`). **Flagged** (cross-file groups → Provide
+    Answer resolves everywhere + trains once; new `GET …/flagged/export` round-trip
+    CSV and `POST …/flagged/sync` to clear library-matched items). **Duplicates**
+    (`kb-check` scan; new opt-in `POST …/kb-check/merge` version-bumps the
+    canonical, never deletes; contradictions shown for manual resolution).
+  - **Review markers (Part F)** — `answered.xlsx` and write-back now render the
+    unresolved-cell marker in **red italic**; ANSWERED cells untouched, the
+    original never overwritten, validations/media preserved.
+  - No CDN / external fonts / telemetry; 127.0.0.1 default with the exposure
+    warning; no API key in any response. Additive-only models; grounding /
+    faithfulness / citations unchanged; Tier-1 exempt and unoverridden.
 - **Ask mode (Phase 10 A).** `qresponder ask "<question>"` (and `POST
   /api/workspaces/{id}/ask`) — one natural-language question through the **exact
   same grounded path** as a questionnaire (`run_ask` reuses `orchestrate`): answer
