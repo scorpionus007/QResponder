@@ -174,8 +174,13 @@ def orchestrate(
     preset: str | None = None,
     style: str | None = None,
     on_event=None,
+    include_sources=None,
+    exclude_sources=None,
 ) -> list[AnswerResult]:
     from ..models import AuditTrail, RetrievedCandidate
+
+    include = {str(s).strip().lower() for s in (include_sources or []) if str(s).strip()} or None
+    exclude = {str(s).strip().lower() for s in (exclude_sources or []) if str(s).strip()} or None
     from .confidence import confidence_rationale, decide_confidence, grounding_score
     from .conflicts import detect_conflicts, detect_history_conflicts
     from .faithfulness import verify_results
@@ -194,7 +199,8 @@ def orchestrate(
     retrieval_mode = config.kb_mode == "retrieval" and hasattr(kb, "retrieve")
     shared_ctx = None
     if not retrieval_mode:
-        shared_ctx = kb.assemble_context(scope_tags=scope_tags, max_chars=config.max_kb_chars)
+        shared_ctx = kb.assemble_context(scope_tags=scope_tags, max_chars=config.max_kb_chars,
+                                         include=include, exclude=exclude)
 
     from .normalize import normalize_query
 
@@ -202,8 +208,9 @@ def orchestrate(
 
     def _retrieve(q: Question):
         # G3: normalize the query (acronym expansion + boilerplate strip) to lift
-        # recall before hitting the retriever.
-        return kb.retrieve(normalize_query(q.text, glossary), scope_tags=scope_tags)
+        # recall before hitting the retriever. Per-run source filter narrows it.
+        return kb.retrieve(normalize_query(q.text, glossary), scope_tags=scope_tags,
+                           include=include, exclude=exclude)
 
     def ctx_for(q: Question):
         """(context, top_score) for a question — per-question in retrieval mode,
@@ -227,7 +234,7 @@ def orchestrate(
             n_attach += 1
             E("attachment", id=q.id)
             continue
-        hit = library.match(q.text, scope_tags=scope_tags)
+        hit = library.match(q.text, scope_tags=scope_tags, include=include, exclude=exclude)
         if hit is not None:
             entry, score = hit
             if score >= AUTO_REUSE_THRESHOLD:
@@ -407,6 +414,13 @@ def orchestrate(
                 ),
                 preset=preset,
             )
+
+    # Record the per-run source include/exclude effect in the audit (Phase 10 C).
+    excl = sorted(exclude) if exclude else []
+    for r in results.values():
+        if r.audit is not None:
+            r.audit.sources_used = sorted({c.source for c in r.citations})
+            r.audit.sources_excluded = excl
 
     # SafeRAG (Part C): scan the question and the retrieved/cited content for
     # prompt-injection markers. A match never changes the answer (the model was

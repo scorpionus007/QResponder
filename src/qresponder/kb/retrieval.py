@@ -23,7 +23,7 @@ from pathlib import Path
 
 from .base import KBChunk, _tokens
 from .in_context import _KB_EXTS, _extract_tags, _read_doc_text
-from .tags import in_scope, load_tag_sidecar
+from .tags import in_scope, load_tag_sidecar, source_allowed
 
 log = logging.getLogger("qresponder.retrieval")
 
@@ -171,12 +171,14 @@ class RetrievalKB:
             vecs = self._get_embedder().embed([c.text for c in self.chunks])
             self._chunk_vecs = np.asarray(vecs, dtype=float)
 
-    def retrieve(self, query: str, scope_tags=None) -> list[tuple[KBChunk, float]]:
-        """Hybrid retrieve → RRF → rerank. Returns [(chunk, rerank_score)]."""
+    def retrieve(self, query: str, scope_tags=None, include=None, exclude=None) -> list[tuple[KBChunk, float]]:
+        """Hybrid retrieve → RRF → rerank. Returns [(chunk, rerank_score)].
+        Per-run source include/exclude (Phase 10 C) narrows the candidate set."""
         import numpy as np
         from rank_bm25 import BM25Okapi
 
-        idxs = [i for i, c in enumerate(self.chunks) if in_scope(c.tags, scope_tags)]
+        idxs = [i for i, c in enumerate(self.chunks)
+                if in_scope(c.tags, scope_tags) and source_allowed(c.source, c.tags, include, exclude)]
         if not idxs:
             return []
         texts = [self.chunks[i].text for i in idxs]

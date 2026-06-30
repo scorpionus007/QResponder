@@ -80,6 +80,8 @@ class _Job:
         self.n_files = 1                  # for batch dashboards
         self.zip_name: str | None = None  # batch zip artifact
         self.workspace_id: str | None = None  # owning workspace (Phase 8 E)
+        self.include_sources: list = []   # per-run source filter (Phase 10 C)
+        self.exclude_sources: list = []
 
 
 class AcceptBody(BaseModel):
@@ -134,6 +136,7 @@ def create_app(config: Config | None = None, model_fetch=None) -> FastAPI:
                 scope_tags=job.tags, evidence_dir=evidence, history=job.history,
                 preset=job.preset, style=job.style, provider=job.provider_obj,
                 on_event=lambda e: _emit(job, e),
+                include_sources=job.include_sources, exclude_sources=job.exclude_sources,
             )
             job.result = result
             _persist(job)
@@ -558,7 +561,8 @@ def create_app(config: Config | None = None, model_fetch=None) -> FastAPI:
     @app.post("/api/workspaces/{wid}/runs")
     async def create_ws_run(wid: str, questionnaire: UploadFile, mode: str = Form(None),
                             tags: str = Form(None), preset: str = Form(None),
-                            provider: str = Form(None), model: str = Form(None)):
+                            provider: str = Form(None), model: str = Form(None),
+                            include_sources: str = Form(None), exclude_sources: str = Form(None)):
         ws = _ws(wid)
         cfg = ws.effective_config(config)
         if mode:
@@ -583,6 +587,8 @@ def create_app(config: Config | None = None, model_fetch=None) -> FastAPI:
         )
         jobs[run_id].review_markers = bool(settings.get("review_markers", True))
         jobs[run_id].workspace_id = wid
+        jobs[run_id].include_sources = parse_tags(include_sources)
+        jobs[run_id].exclude_sources = parse_tags(exclude_sources)
         return {"run_id": run_id, "workspace": wid}
 
     # ---- Ask mode (Phase 10 A): one question, the same grounded path -------
@@ -605,7 +611,9 @@ def create_app(config: Config | None = None, model_fetch=None) -> FastAPI:
         scope = parse_tags(body.get("tags")) if body.get("tags") else ws.default_tags()
         r = run_ask(question, str(ws.kb_dir), str(ws.qa_path), cfg, scope_tags=scope,
                     provider=provider_obj, evidence_dir=str(ws.evidence_dir),
-                    preset=preset_name if style else None, style=style)
+                    preset=preset_name if style else None, style=style,
+                    include_sources=parse_tags(body.get("include_sources")),
+                    exclude_sources=parse_tags(body.get("exclude_sources")))
         return r.model_dump()
 
     # ---- workspace batch (Part D) -----------------------------------------

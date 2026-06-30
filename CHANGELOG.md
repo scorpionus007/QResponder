@@ -21,6 +21,12 @@ versioning.
   and `POST …/connect`. Optional **Google Drive** behind a `connectors` extra.
   Connectors run **only on explicit `connect` — never during answering**; the
   answering path makes no fetch.
+- **Per-run source include/exclude (Phase 10 C).** `--include-source` /
+  `--exclude-source` (by source name or tag) on `answer`/`ask` + run/ask forms;
+  applied at retrieval/candidate selection and library scoping (reuses
+  tag-scoping). Effective `sources_used` / `sources_excluded` recorded in the
+  audit. If excluding a source removes the grounding, the answer **abstains** —
+  it never fabricates from another source.
 - **Provider flexibility + live model picker (Phase 8 A/B).** Keys for OpenAI /
   Gemini / DeepSeek / Anthropic (own `.env` key each) + local; OpenAI-compatible
   adapter routes the cloud ones by base URL, Anthropic native. `llm/models.py`

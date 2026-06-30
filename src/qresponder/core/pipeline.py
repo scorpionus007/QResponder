@@ -50,6 +50,8 @@ def run_ask(
     history=None,
     preset: str | None = None,
     style: str | None = None,
+    include_sources=None,
+    exclude_sources=None,
 ) -> AnswerResult:
     """Answer ONE natural-language question through the EXACT same grounded path
     as a questionnaire (library -> retrieval -> grounded generation -> faithfulness
@@ -61,6 +63,7 @@ def run_ask(
         [q], provider, library, kb, config,
         scope_tags=scope_tags, evidence=evidence, history=history,
         preset=preset, style=style,
+        include_sources=include_sources, exclude_sources=exclude_sources,
     )
     return results[0]
 
@@ -77,6 +80,8 @@ def run_pipeline(
     preset: str | None = None,
     style: str | None = None,
     on_event=None,
+    include_sources=None,
+    exclude_sources=None,
 ) -> QuestionnaireResult:
     import os
 
@@ -103,6 +108,7 @@ def run_pipeline(
             questions, provider, library, kb, config,
             scope_tags=scope_tags, evidence=evidence, history=history,
             preset=preset, style=style, on_event=on_event,
+            include_sources=include_sources, exclude_sources=exclude_sources,
         )
     except Exception as exc:  # noqa: BLE001 - surface as an event, then re-raise
         E("error", error=str(exc))

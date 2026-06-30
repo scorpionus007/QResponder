@@ -195,6 +195,8 @@ def answer(
     preset: str = typer.Option(None, "--preset", help="Answer-style preset: concise|detailed|formal|<custom>"),
     provider: str = typer.Option(None, "--provider", help="openai|gemini|deepseek|anthropic|local (overrides config)"),
     model: str = typer.Option(None, "--model", help="Exact model id (see `qresponder models`)"),
+    include_source: list[str] = typer.Option(None, "--include-source", help="Only use these sources (name or tag; repeatable)"),
+    exclude_source: list[str] = typer.Option(None, "--exclude-source", help="Exclude these sources (name or tag; repeatable)"),
     review_markers: bool = typer.Option(
         True, "--review-markers/--no-review-markers", help="Mark NEEDS_REVIEW cells visibly (default on)"
     ),
@@ -258,7 +260,8 @@ def answer(
     provider_obj = _resolve_provider(cfg, provider, model)
 
     result = run_pipeline(questionnaire, kb, qa, cfg, scope_tags=scope, evidence_dir=evidence,
-                          preset=preset if style else None, style=style, provider=provider_obj)
+                          preset=preset if style else None, style=style, provider=provider_obj,
+                          include_sources=include_source, exclude_sources=exclude_source)
     # Always emit the safe Phase-0/1 artifacts.
     paths = write_all(result, out, review_markers=review_markers)
 
@@ -305,6 +308,8 @@ def ask(
     preset: str = typer.Option(None, "--preset"),
     provider: str = typer.Option(None, "--provider"),
     model: str = typer.Option(None, "--model"),
+    include_source: list[str] = typer.Option(None, "--include-source"),
+    exclude_source: list[str] = typer.Option(None, "--exclude-source"),
     as_json: bool = typer.Option(False, "--json", help="Emit the full AnswerResult as JSON"),
     config_path: str = typer.Option("config.yaml", "--config"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
@@ -332,7 +337,8 @@ def ask(
     style = resolve_preset(preset)
     r = run_ask(question, kb_dir, qa_path, cfg, scope_tags=parse_tags(tags),
                 provider=provider_obj, evidence_dir=ev_dir,
-                preset=preset if style else None, style=style)
+                preset=preset if style else None, style=style,
+                include_sources=include_source, exclude_sources=exclude_source)
 
     if as_json:
         typer.echo(r.model_dump_json(indent=2))

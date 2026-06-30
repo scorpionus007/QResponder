@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 
 from .base import KBChunk
-from .tags import in_scope, load_tag_sidecar, normalize_tags
+from .tags import in_scope, load_tag_sidecar, normalize_tags, source_allowed
 
 log = logging.getLogger("qresponder.kb")
 
@@ -83,12 +83,14 @@ class InContextKB:
         log.info("Loaded %d KB chunk(s) from %s", len(chunks), kb_dir)
         return cls(chunks)
 
-    def scoped(self, scope_tags=None) -> list[KBChunk]:
-        return [c for c in self.chunks if in_scope(c.tags, scope_tags)]
+    def scoped(self, scope_tags=None, include=None, exclude=None) -> list[KBChunk]:
+        return [c for c in self.chunks if in_scope(c.tags, scope_tags)
+                and source_allowed(c.source, c.tags, include, exclude)]
 
-    def assemble_context(self, scope_tags=None, max_chars: int = 150_000) -> str:
+    def assemble_context(self, scope_tags=None, max_chars: int = 150_000,
+                         include=None, exclude=None) -> str:
         """Build a cited context block from in-scope chunks, bounded by max_chars."""
-        chunks = self.scoped(scope_tags)
+        chunks = self.scoped(scope_tags, include=include, exclude=exclude)
         lines: list[str] = []
         total = 0
         truncated = False

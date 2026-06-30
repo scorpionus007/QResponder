@@ -111,6 +111,9 @@ class AuditTrail(BaseModel):
     safety: dict = Field(default_factory=dict)
     # Answer-style preset used (Phase 7 Part A), for the evidence pack.
     preset: str | None = None
+    # Per-run source include/exclude effect (Phase 10 C).
+    sources_used: list[str] = Field(default_factory=list)
+    sources_excluded: list[str] = Field(default_factory=list)
 
 
 class AnswerResult(BaseModel):

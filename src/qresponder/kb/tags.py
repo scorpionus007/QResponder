@@ -49,6 +49,18 @@ def normalize_tags(tags) -> list[str]:
     return [str(t).strip().lower() for t in tags if str(t).strip()]
 
 
+def source_allowed(source_name, artifact_tags, include, exclude) -> bool:
+    """Per-run source include/exclude (Phase 10 C). `include`/`exclude` are sets
+    of lowercased source names or tags. Exclude wins; an empty include = all."""
+    name = (source_name or "").lower()
+    tags = set(normalize_tags(artifact_tags))
+    if exclude and (name in exclude or tags & exclude):
+        return False
+    if include:
+        return name in include or bool(tags & include)
+    return True
+
+
 def in_scope(artifact_tags, scope_tags) -> bool:
     """True if the artifact is in scope for the given tag scope.
 

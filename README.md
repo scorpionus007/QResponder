@@ -373,6 +373,21 @@ ranges, and cloud-metadata IPs unless you pass `--allow-private`).
 > automatically, never during answering.** The answering path itself makes no
 > fetch; a local model still means zero external calls.
 
+## Per-run source include / exclude
+
+Scope which sources a run may use — "don't use the marketing site for this one":
+
+```
+qresponder answer -q f.xlsx --kb ./kb --exclude-source marketing.md --exclude-source marketing
+qresponder ask "..." --include-source soc2-policies     # only these sources are candidates
+```
+
+Filters apply at retrieval/candidate selection (by source **name or tag**), and
+the audit records the effective `sources_used` / `sources_excluded`. Because it
+only *narrows* the candidate set, the grounding guard handles the rest: **if
+excluding a source removes the grounding, the answer abstains** — it never
+fabricates from somewhere else.
+
 ## Ask mode
 
 Ask one question, get an instant grounded answer — it's the **exact same grounded
