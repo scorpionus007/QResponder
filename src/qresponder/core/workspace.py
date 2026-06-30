@@ -38,7 +38,7 @@ ALLOWED_SETTINGS = {
 }
 # Workspace-only settings (not engine Config fields): stored in settings.yaml and
 # read directly, never pushed into the global Config.
-WORKSPACE_ONLY_SETTINGS = {"tags", "preset", "review_markers"}
+WORKSPACE_ONLY_SETTINGS = {"tags", "preset", "review_markers", "provider", "model"}
 # Never settable through a workspace (would leak/override credentials).
 FORBIDDEN_SETTINGS = {
     "llm_provider",

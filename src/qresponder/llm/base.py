@@ -43,28 +43,14 @@ def with_retry(fn: Callable[[], str], *, attempts: int = 2, base_delay: float = 
 
 
 def make_provider(config) -> LLMProvider:
-    """Construct the configured provider. Switching providers needs no code change."""
-    provider = (config.llm_provider or "").strip().lower()
-    if provider == "anthropic":
-        from .anthropic_provider import AnthropicProvider
+    """Construct the default provider from config.llm_provider (Phase 8: routes
+    anthropic | openai | gemini | deepseek | local | mock via the registry)."""
+    from .providers import PROVIDER_SPECS, canonical, make_provider_for
 
-        return AnthropicProvider(
-            api_key=config.anthropic_api_key, model=config.anthropic_model
+    p = canonical(config.llm_provider)
+    if p != "mock" and p not in PROVIDER_SPECS:
+        raise ProviderError(
+            f"Unknown LLM_PROVIDER '{config.llm_provider}'. Use one of: "
+            "anthropic, openai, gemini, deepseek, local, mock."
         )
-    if provider in {"openai_compat", "openai", "openai-compat"}:
-        from .openai_compat_provider import OpenAICompatProvider
-
-        return OpenAICompatProvider(
-            base_url=config.llm_base_url,
-            api_key=config.llm_api_key,
-            model=config.llm_model,
-        )
-    if provider == "mock":
-        from .mock import MockProvider
-
-        return MockProvider()
-
-    raise ProviderError(
-        f"Unknown LLM_PROVIDER '{config.llm_provider}'. "
-        "Use 'anthropic', 'openai_compat', or 'mock'."
-    )
+    return make_provider_for(config, p, None)

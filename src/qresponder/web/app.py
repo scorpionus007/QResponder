@@ -70,6 +70,7 @@ class _Job:
         self.preset: str | None = None    # answer-style preset name (Phase 7 A)
         self.style: str | None = None     # resolved preset instructions
         self.review_markers: bool = True  # mark NEEDS_REVIEW cells on export (Phase 7 C)
+        self.provider_obj = None          # explicit LLM provider (Phase 8) — no mock fallback
 
 
 class AcceptBody(BaseModel):
@@ -100,11 +101,12 @@ def _persist(job: _Job) -> None:
         )
 
 
-def create_app(config: Config | None = None) -> FastAPI:
+def create_app(config: Config | None = None, model_fetch=None) -> FastAPI:
     config = config or load_config()
     app = FastAPI(title="QRESPONDER review UI")
     jobs: dict[str, _Job] = {}
     app.state.jobs = jobs  # test seam
+    app.state.model_fetch = model_fetch  # injectable HTTP fetcher for model lists (tests)
     store = WorkspaceStore(config.extra.get("workspaces_dir") or config.workspaces_dir)
     app.state.store = store
 
@@ -115,7 +117,7 @@ def create_app(config: Config | None = None) -> FastAPI:
             result = run_pipeline(
                 job.questionnaire_path, kb, qa, cfg,
                 scope_tags=job.tags, evidence_dir=evidence, history=job.history,
-                preset=job.preset, style=job.style,
+                preset=job.preset, style=job.style, provider=job.provider_obj,
             )
             job.result = result
             _persist(job)
@@ -125,9 +127,24 @@ def create_app(config: Config | None = None) -> FastAPI:
             job.error = str(exc)
             job.status = "error"
 
+    def _build_provider(provider_name: str | None, model: str | None):
+        """Build the selected provider — NO silent mock fallback. Raises a clear
+        error if unconfigured (the run is blocked, never auto-mocked)."""
+        from ..llm.providers import canonical, is_configured, make_provider_for
+
+        p = canonical(provider_name or config.llm_provider)
+        if not is_configured(config, p):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Provider '{p}' is not configured — set its key in .env or pick another.")
+        try:
+            return make_provider_for(config, p, model)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail=f"{p} unavailable: {exc}")
+
     def _start_job(out_dir: Path, qa_path: str, tags, questionnaire: UploadFile,
                    data: bytes, kb, evidence, cfg: Config, history=None, history_path=None,
-                   preset=None, style=None) -> str:
+                   preset=None, style=None, provider_obj=None) -> str:
         run_id = uuid.uuid4().hex[:12]
         out_dir.mkdir(parents=True, exist_ok=True)
         job = _Job(run_id, out_dir, qa_path, normalize_tags(tags))
@@ -135,6 +152,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         job.history_path = history_path
         job.preset = preset
         job.style = style
+        job.provider_obj = provider_obj
         dest = out_dir / _safe_filename(questionnaire.filename or "questionnaire")
         dest.write_bytes(data)
         job.questionnaire_path = str(dest)
@@ -154,12 +172,41 @@ def create_app(config: Config | None = None) -> FastAPI:
         except WorkspaceError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
 
-    # ---- status / doctor ---------------------------------------------------
+    # ---- status / providers / doctor --------------------------------------
     @app.get("/api/status")
     def status():
-        provider = config.llm_provider
-        model = config.anthropic_model if provider == "anthropic" else config.llm_model
-        return {"provider": provider, "model": model, "kb_mode": config.kb_mode}
+        from ..llm.models import reachable
+        from ..llm.providers import canonical, model_for
+
+        provider = canonical(config.llm_provider)
+        model = model_for(config, provider, None)
+        if provider == "mock":
+            active, reason = True, "mock provider (dev/test)"
+        else:
+            active, reason = reachable(provider, config, fetch=app.state.model_fetch)
+        # No key, ever — only provider/model names + a liveness flag.
+        return {"provider": provider, "model": model, "kb_mode": config.kb_mode,
+                "active": active, "reason": reason}
+
+    @app.get("/api/providers")
+    def providers():
+        from ..llm.models import list_models
+        from ..llm.providers import PROVIDER_SPECS, is_configured
+
+        out = []
+        for name, spec in PROVIDER_SPECS.items():
+            configured = is_configured(config, name)
+            entry = {"name": name, "label": spec["label"], "configured": configured,
+                     "reachable": False, "models": [], "reason": None}
+            if configured:
+                ml = list_models(name, config, fetch=app.state.model_fetch)
+                entry["models"] = [m.to_dict() for m in ml.models]
+                entry["reachable"] = ml.reason is None
+                entry["reason"] = ml.reason
+            else:
+                entry["reason"] = f"set the {name} key in .env"
+            out.append(entry)  # never includes a key
+        return out
 
     @app.get("/api/doctor")
     def doctor():
@@ -376,7 +423,8 @@ def create_app(config: Config | None = None) -> FastAPI:
     # ---- workspace runs ----------------------------------------------------
     @app.post("/api/workspaces/{wid}/runs")
     async def create_ws_run(wid: str, questionnaire: UploadFile, mode: str = Form(None),
-                            tags: str = Form(None), preset: str = Form(None)):
+                            tags: str = Form(None), preset: str = Form(None),
+                            provider: str = Form(None), model: str = Form(None)):
         ws = _ws(wid)
         cfg = ws.effective_config(config)
         if mode:
@@ -390,23 +438,27 @@ def create_app(config: Config | None = None) -> FastAPI:
         settings = ws.load_settings()
         preset_name = preset or settings.get("preset")
         style = resolve_preset(preset_name, ws.path)
+        # Build the selected provider up front — blocks (400) on misconfig, never mocks.
+        provider_obj = _build_provider(provider, model or settings.get("model"))
         hist_path = ws.path / "history.yaml"
         run_id = _start_job(
             out_dir, str(ws.qa_path), scope, questionnaire, data,
             str(ws.kb_dir), str(ws.evidence_dir), cfg,
             history=HistoryStore(hist_path).load(), history_path=str(hist_path),
-            preset=preset_name if style else None, style=style,
+            preset=preset_name if style else None, style=style, provider_obj=provider_obj,
         )
         jobs[run_id].review_markers = bool(settings.get("review_markers", True))
         return {"run_id": run_id, "workspace": wid}
 
     # ---- workspace batch (Part D) -----------------------------------------
     @app.post("/api/workspaces/{wid}/batch")
-    async def ws_batch(wid: str, files: list[UploadFile]):
+    async def ws_batch(wid: str, files: list[UploadFile], provider: str = Form(None),
+                       model: str = Form(None)):
         from ..core.batch import run_batch, zip_batch
 
         ws = _ws(wid)
         cfg = ws.effective_config(config)
+        provider_obj = _build_provider(provider, model or ws.load_settings().get("model"))
         batch_id = "batch_" + uuid.uuid4().hex[:10]
         out_dir = ws.runs_dir / batch_id
         in_dir = out_dir / "_in"
@@ -417,7 +469,8 @@ def create_app(config: Config | None = None) -> FastAPI:
             dest.write_bytes(await f.read())
             saved.append(dest)
         summary = run_batch(saved, str(ws.kb_dir), str(ws.qa_path), cfg, out_dir,
-                            scope_tags=ws.default_tags(), evidence_dir=str(ws.evidence_dir))
+                            scope_tags=ws.default_tags(), evidence_dir=str(ws.evidence_dir),
+                            provider=provider_obj)
         zname = Path(zip_batch(out_dir)).name
         # Register a pseudo-job so the existing download route serves the zip.
         jobs[batch_id] = _Job(batch_id, out_dir, str(ws.qa_path), ws.default_tags())

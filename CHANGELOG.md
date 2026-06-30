@@ -7,6 +7,15 @@ versioning.
 ## [Unreleased]
 
 ### Added
+- **Provider flexibility + live model picker (Phase 8 A/B).** Keys for OpenAI /
+  Gemini / DeepSeek / Anthropic (own `.env` key each) + local; OpenAI-compatible
+  adapter routes the cloud ones by base URL, Anthropic native. `llm/models.py`
+  fetches **live** model lists per provider (server-side, key-gated, cached, with
+  a reason on failure — never hardcoded); `llm/providers.py` registry + routing.
+  `GET /api/providers` (no key) and extended `GET /api/status` (active + reason);
+  `qresponder models`, `--provider/--model` on `answer`; per-run + workspace-default
+  model selection. **No silent mock fallback** — an unreachable/unconfigured
+  provider blocks the run with a clear error; the mock is test-only.
 - **Competitor-parity phase (Phase 7).**
   - **Answer-style presets** — built-in `concise`/`detailed`/`formal` + custom
     per-workspace presets; `--preset` / run form / workspace default. Style-only:

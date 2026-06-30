@@ -87,6 +87,8 @@ def answer(
         False, "--writeback", help="Also fill answers into a copy of the original file"
     ),
     preset: str = typer.Option(None, "--preset", help="Answer-style preset: concise|detailed|formal|<custom>"),
+    provider: str = typer.Option(None, "--provider", help="openai|gemini|deepseek|anthropic|local (overrides config)"),
+    model: str = typer.Option(None, "--model", help="Exact model id (see `qresponder models`)"),
     review_markers: bool = typer.Option(
         True, "--review-markers/--no-review-markers", help="Mark NEEDS_REVIEW cells visibly (default on)"
     ),
@@ -145,8 +147,25 @@ def answer(
     style = resolve_preset(preset)
     if preset and style is None:
         typer.secho(f"Unknown preset '{preset}'; using default style.", fg=typer.colors.YELLOW)
+
+    # Build the selected provider explicitly — no silent mock fallback.
+    provider_obj = None
+    if provider or model:
+        from .llm.base import ProviderError
+        from .llm.providers import canonical, is_configured, make_provider_for
+
+        p = canonical(provider or cfg.llm_provider)
+        if not is_configured(cfg, p):
+            typer.secho(f"Provider '{p}' is not configured — set its key in .env.", fg=typer.colors.RED)
+            raise typer.Exit(code=1)
+        try:
+            provider_obj = make_provider_for(cfg, p, model)
+        except ProviderError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED)
+            raise typer.Exit(code=1)
+
     result = run_pipeline(questionnaire, kb, qa, cfg, scope_tags=scope, evidence_dir=evidence,
-                          preset=preset if style else None, style=style)
+                          preset=preset if style else None, style=style, provider=provider_obj)
     # Always emit the safe Phase-0/1 artifacts.
     paths = write_all(result, out, review_markers=review_markers)
 
@@ -261,6 +280,34 @@ def audit(
     typer.echo(f"  audit.md:   {paths['md']}")
     if zip_pack:
         typer.echo(f"  zip:        {bundle_zip(run)}")
+
+
+@app.command()
+def models(
+    provider: str = typer.Option(None, "--provider", help="openai|gemini|deepseek|anthropic|local (default: all configured)"),
+    config_path: str = typer.Option("config.yaml", "--config"),
+):
+    """List live models from each configured provider (server-side, key-gated)."""
+    from .llm.models import list_models
+    from .llm.providers import PROVIDER_SPECS, is_configured
+
+    cfg = load_config(config_path)
+    names = [provider] if provider else list(PROVIDER_SPECS)
+    for name in names:
+        spec = PROVIDER_SPECS.get(name)
+        if spec is None:
+            typer.secho(f"{name}: unknown provider", fg=typer.colors.RED)
+            continue
+        if not is_configured(cfg, name):
+            typer.secho(f"{spec['label']}: not configured", fg=typer.colors.YELLOW)
+            continue
+        ml = list_models(name, cfg)
+        if ml.reason:
+            typer.secho(f"{spec['label']}: {ml.reason}", fg=typer.colors.RED)
+        else:
+            typer.secho(f"{spec['label']} ({len(ml.models)} models):", fg=typer.colors.GREEN)
+            for m in ml.models:
+                typer.echo(f"  {m.id}")
 
 
 @app.command(name="kb-check")

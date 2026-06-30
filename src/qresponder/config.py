@@ -37,13 +37,19 @@ def _load_dotenv(path: str | Path = ".env") -> None:
 
 class Config(BaseModel):
     # --- Provider selection -------------------------------------------------
-    llm_provider: str = "anthropic"  # anthropic | openai_compat | mock
+    # anthropic | openai | gemini | deepseek | local (openai_compat) | mock
+    llm_provider: str = "anthropic"
 
     # Anthropic path
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-opus-4-8"
 
-    # OpenAI-compatible path (Ollama / vLLM / LM Studio / OpenAI / OpenRouter)
+    # Cloud provider keys (Phase 8 A) — server-side only, never sent to the browser.
+    openai_api_key: str = ""
+    gemini_api_key: str = ""
+    deepseek_api_key: str = ""
+
+    # Local / generic OpenAI-compatible path (Ollama / vLLM / LM Studio / OpenRouter)
     llm_base_url: str = "http://localhost:11434/v1"
     llm_api_key: str = "ollama"
     llm_model: str = "llama3.1"
@@ -131,6 +137,9 @@ _ENV_MAP = {
     "LLM_PROVIDER": "llm_provider",
     "ANTHROPIC_API_KEY": "anthropic_api_key",
     "ANTHROPIC_MODEL": "anthropic_model",
+    "OPENAI_API_KEY": "openai_api_key",
+    "GEMINI_API_KEY": "gemini_api_key",
+    "DEEPSEEK_API_KEY": "deepseek_api_key",
     "LLM_BASE_URL": "llm_base_url",
     "LLM_API_KEY": "llm_api_key",
     "LLM_MODEL": "llm_model",

@@ -117,27 +117,44 @@ localhost. The provider key is never accepted, stored, or returned by any
 endpoint. Like the rest of the local path, the page loads **zero external
 assets** (no CDN, no web fonts) and sends **no telemetry**.
 
-## The two connection paths
+## Providers & the live model picker
 
-Local vs cloud is just a different base URL. Edit `.env`:
+Drop in a key for any of **OpenAI, Google Gemini, DeepSeek, or Anthropic** (each
+by its own `.env` key) plus **local** (Ollama/vLLM/LM Studio). The **key stays
+server-side and is never sent to the browser** — the UI only selects a provider
+and a model.
 
-**Cloud — Anthropic**
 ```
-LLM_PROVIDER=anthropic
+# .env — set any you want
+LLM_PROVIDER=openai            # anthropic | openai | gemini | deepseek | local
+OPENAI_API_KEY=sk-...
+GEMINI_API_KEY=...
+DEEPSEEK_API_KEY=...
 ANTHROPIC_API_KEY=sk-ant-...
-ANTHROPIC_MODEL=claude-opus-4-8
-```
-
-**Local — Ollama (fully offline)**
-```
-LLM_PROVIDER=openai_compat
+# local:
 LLM_BASE_URL=http://localhost:11434/v1
 LLM_API_KEY=ollama
 LLM_MODEL=llama3.1
 ```
 
-The same `OpenAICompatProvider` also covers vLLM, LM Studio, OpenAI,
-OpenRouter, Together, Groq, and Azure OpenAI — one class, three config values.
+**Live model lists, never hardcoded.** `qresponder models [--provider P]` (and the
+web run form) fetch the exact current model IDs **live** from each configured
+provider's `/models` endpoint — server-side, key-gated, cached ~10 min, with an
+honest reason on failure (never a guessed name). Pick the model per run with
+`--provider/--model` or the dropdown; a workspace default (model name only) lives
+in `settings.yaml`.
+
+**Live status + no silent mock.** `GET /api/status` shows a green
+`● <provider>/<model> active` when the model is reachable, red with the reason
+when not. If the selected provider is unreachable or unconfigured, **the run is
+blocked with a clear error — it never silently falls back to the mock** (the mock
+is test-only). OpenAI/Gemini/DeepSeek route through the OpenAI-compatible adapter
+(right base URL each); Anthropic uses the native adapter.
+
+> **Egress note:** a *local* model + local embeddings/reranker still make **zero
+> external calls**, and the tool never phones home (no telemetry). Choosing a
+> cloud model obviously calls that cloud; provider/model-list calls are
+> server-side only, never from the browser.
 
 ## `qresponder doctor`
 

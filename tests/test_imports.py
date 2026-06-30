@@ -52,6 +52,8 @@ def test_no_top_level_retrieval_deps():
             "qresponder.kb.evidence",
             "qresponder.llm.embeddings",
             "qresponder.llm.reranker",
+            "qresponder.llm.providers",
+            "qresponder.llm.models",
             "qresponder.eval.runner",
             "qresponder.output.writeback",
             "qresponder.output.writer",
