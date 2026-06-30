@@ -255,8 +255,32 @@ def test_answered_xlsx_shows_marker(tmp_path):
 
     res = QuestionnaireResult(source_file="q.xlsx", results=[_flagged("q1", "Unsupported?", None)])
     p = write_xlsx(res, tmp_path / "answered.xlsx")
-    cell = openpyxl.load_workbook(p).active.cell(row=2, column=3).value
-    assert cell.startswith("⚠ NEEDS REVIEW")
+    cell = openpyxl.load_workbook(p).active.cell(row=2, column=3)
+    assert cell.value.startswith("⚠ NEEDS REVIEW")
+    # Part F: the marker renders red + italic; ANSWERED cells are unaffected.
+    assert cell.font.italic is True
+    assert (cell.font.color.rgb or "").endswith("C0392B")
+
+
+def test_review_marker_is_red_italic_in_writeback(tmp_path):
+    """Part F: write-back renders the unresolved-cell marker red + italic, while the
+    ANSWERED cell keeps a normal (non-italic) font."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Q"
+    ws["A2"] = "Encrypt at rest?"
+    ws["A3"] = "Unsupported?"
+    orig = tmp_path / "q.xlsx"
+    wb.save(orig)
+    res = QuestionnaireResult(source_file=str(orig), results=[
+        _answered("q1", "Encrypt at rest?", "Yes", "Q!B2"),
+        _flagged("q2", "Unsupported?", "Q!B3"),
+    ])
+    info = write_back(res, str(orig), str(tmp_path / "out"))
+    ws_o = openpyxl.load_workbook(info["written"])["Q"]
+    assert ws_o["B3"].font.italic is True
+    assert (ws_o["B3"].font.color.rgb or "").endswith("C0392B")
+    assert ws_o["B2"].value == "Yes" and not ws_o["B2"].font.italic  # answered untouched
 
 
 def test_writeback_docx_paragraph(tmp_path):

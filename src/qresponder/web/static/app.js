@@ -1,5 +1,7 @@
 "use strict";
-// QRESPONDER UI — vanilla JS, no framework, no external calls.
+// QRESPONDER dashboard — vanilla JS, no framework, no external calls.
+// Thin presentation over the existing engine endpoints. The single grounded path
+// is the only path; this file moves no answering logic.
 
 // ---- tiny DOM + fetch helpers ----
 function el(tag, attrs = {}, ...kids) {
@@ -24,119 +26,589 @@ async function api(path, opts = {}) {
 const jpost = (p, body) => api(p, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 const jpatch = (p, body) => api(p, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 const jput = (p, body) => api(p, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+const csv = (s) => (s || "").split(",").map((x) => x.trim()).filter(Boolean);
+function toast(msg, kind = "") {
+  const t = el("div", { class: "toast " + kind }, msg);
+  document.body.append(t);
+  setTimeout(() => t.remove(), 4200);
+}
 
-const S = { workspaces: [], current: null, status: {}, doctor: null };
+const S = { workspaces: [], current: null, status: {}, doctor: null, page: "upload", recent: {} };
 const root = () => $("app");
 
 // ---- bootstrap ----
 async function boot() {
-  try { S.status = await api("/api/status"); $("provider").textContent = `${S.status.provider} · ${S.status.model}`; } catch (_) {}
+  await refreshStatus();
   refreshDoctor();
   await loadWorkspaces();
-  if (!S.workspaces.length) return showWizard();
+  if (!S.workspaces.length) { hideChrome(); return showWizard(); }
   S.current = S.current || S.workspaces[0].id;
   renderSwitcher();
-  showHome();
+  renderNav();
+  go(S.page);
+}
+function hideChrome() { $("nav").classList.add("hidden"); $("ws-switcher").classList.add("hidden"); }
+async function refreshStatus() {
+  try {
+    S.status = await api("/api/status");
+    const ms = $("model-status");
+    ms.className = "model-status " + (S.status.active ? "ok" : "bad");
+    ms.querySelector(".ms-text").textContent = `${S.status.provider}/${S.status.model}`;
+    ms.title = (S.status.active ? "Reachable" : "Unreachable: " + (S.status.reason || "")) +
+      " — server-side; your API key never reaches this page";
+  } catch (_) {}
 }
 async function refreshDoctor() {
-  try { S.doctor = await api("/api/doctor"); $("doctor-dot").className = "doctor-dot " + (S.doctor.ok ? "ok" : "bad"); }
-  catch (_) { $("doctor-dot").className = "doctor-dot bad"; }
+  try { S.doctor = await api("/api/doctor"); } catch (_) { S.doctor = { ok: false }; }
 }
 async function loadWorkspaces() { S.workspaces = await api("/api/workspaces"); }
 
+function renderNav() {
+  const nav = $("nav");
+  nav.classList.remove("hidden");
+  for (const a of nav.querySelectorAll(".nav-item")) {
+    a.classList.toggle("active", a.dataset.page === S.page);
+    a.onclick = () => go(a.dataset.page);
+  }
+}
 function renderSwitcher() {
   const sw = $("ws-switcher");
   sw.classList.remove("hidden");
-  const sel = el("select", { onchange: (e) => { if (e.target.value === "__new") return showWizard(); S.current = e.target.value; showHome(); } });
+  const sel = el("select", { onchange: (e) => { if (e.target.value === "__new") return showWizard(); S.current = e.target.value; go(S.page); } });
   for (const w of S.workspaces) sel.append(el("option", { value: w.id, ...(w.id === S.current ? { selected: "selected" } : {}) }, w.name));
   sel.append(el("option", { value: "__new" }, "+ New workspace"));
   sw.replaceChildren(sel);
 }
 
-// ---- setup wizard ----
-const WIZ_STEPS = ["Name", "Model", "Knowledge base", "Approved answers", "Evidence", "Ready"];
-function showWizard() {
-  const st = { i: 0, wid: null };
-  $("ws-switcher").classList.add("hidden");
-  const render = () => {
-    const pills = el("div", { class: "steps" }, ...WIZ_STEPS.map((s, i) =>
-      el("span", { class: "step-pill " + (i === st.i ? "active" : i < st.i ? "done" : "") }, `${i + 1}. ${s}`)));
-    const body = el("div", {});
-    root().replaceChildren(el("div", { class: "card" }, el("h1", {}, "Set up a workspace"), pills, body));
-    STEP[st.i](body, st, render);
+function go(page) {
+  S.page = page;
+  renderNav();
+  const view = el("div", {});
+  root().replaceChildren(view);
+  const wid = S.current;
+  if (page === "kb") kbPage(view, wid);
+  else if (page === "settings") settingsPage(view, wid);
+  else uploadPage(view, wid);
+}
+
+// ============================================================================
+// PART C/D/E — Upload screen + live processing + per-file results
+// ============================================================================
+const UPLOAD_EXTS = [".docx", ".pdf", ".xlsx", ".xlsm", ".csv"];
+function uploadPage(view, wid) {
+  view.append(el("div", { class: "page-head" }, el("h1", {}, "Upload questionnaires"),
+    el("div", { class: "sub" }, "Drop your files and let QRESPONDER draft grounded, cited answers — every answer reviewable, nothing submitted.")));
+
+  // --- model + preset controls ---
+  const provSel = el("select", {}, el("option", { value: "" }, `default (${S.status.provider})`));
+  const modelSel = el("select", {}, el("option", { value: "" }, "default model"));
+  const presetSel = el("select", {}, el("option", { value: "" }, "no preset (default style)"));
+  const instr = el("textarea", { placeholder: "Optional style guidance (tone, length). Style only — never changes what's grounded." });
+  loadProviders(provSel, modelSel);
+  loadPresets(presetSel, wid);
+
+  const controls = el("div", { class: "card" }, el("h2", {}, "Model for this upload"),
+    el("p", { class: "muted" }, "Pick the provider/model for this batch. Keys stay server-side — only names are shown. An unreachable provider blocks the run (no mock fallback)."),
+    el("div", { class: "row" },
+      el("label", { class: "field" }, "Provider", provSel),
+      el("label", { class: "field" }, "Model", modelSel),
+      el("label", { class: "field" }, "Preset", presetSel)),
+    el("label", { class: "field" }, el("span", {}, "Agent instructions (optional)"), instr));
+
+  // --- dropzone + file list ---
+  const picked = [];
+  const dz = el("div", { class: "dropzone" },
+    el("div", {}, el("strong", {}, "Drop your questionnaire files here"), " or click to choose"),
+    el("div", { class: "dz-hint" }, "supports .docx, .pdf, .xlsx, .csv — up to 50 per batch"));
+  const fileInput = el("input", { type: "file", multiple: "multiple", class: "hidden", accept: UPLOAD_EXTS.join(",") });
+  const list = el("ul", { class: "filelist" });
+  const err = el("div", {});
+  const runHost = el("div", {});
+
+  function fmtSize(n) { return n < 1024 ? n + " B" : n < 1048576 ? (n / 1024).toFixed(0) + " KB" : (n / 1048576).toFixed(1) + " MB"; }
+  function add(files) {
+    for (const f of files) {
+      const ext = "." + (f.name.split(".").pop() || "").toLowerCase();
+      const ok = UPLOAD_EXTS.includes(ext);
+      if (picked.length < 50) picked.push({ f, ok });
+    }
+    renderPicked();
+  }
+  function renderPicked() {
+    if (!picked.length) { list.replaceChildren(); return; }
+    list.replaceChildren(...picked.map((p, i) => el("li", {},
+      el("span", { class: "fname" }, p.f.name),
+      el("span", { class: "fsize" }, fmtSize(p.f.size)),
+      p.ok ? el("span", { class: "ok", title: "supported" }, "✓") : el("span", { class: "bad", title: "unsupported type — will be skipped" }, "✗ unsupported"),
+      el("span", { class: "x", title: "remove", onclick: () => { picked.splice(i, 1); renderPicked(); } }, "×"))));
+  }
+  dz.addEventListener("click", () => fileInput.click());
+  dz.addEventListener("dragover", (e) => { e.preventDefault(); dz.classList.add("drag"); });
+  dz.addEventListener("dragleave", () => dz.classList.remove("drag"));
+  dz.addEventListener("drop", (e) => { e.preventDefault(); dz.classList.remove("drag"); add(e.dataTransfer.files); });
+  fileInput.addEventListener("change", () => add(fileInput.files));
+
+  const runBtn = el("button", { class: "btn primary", onclick: async () => {
+    const good = picked.filter((p) => p.ok);
+    if (!good.length) { err.replaceChildren(el("div", { class: "error" }, "Add at least one supported file (.docx/.pdf/.xlsx/.csv).")); return; }
+    err.replaceChildren();
+    const fd = new FormData();
+    for (const p of good) fd.append("files", p.f);
+    if (provSel.value) fd.append("provider", provSel.value);
+    if (modelSel.value) fd.append("model", modelSel.value);
+    runBtn.disabled = true;
+    try {
+      const r = await api(`/api/workspaces/${wid}/batch-stream`, { method: "POST", body: fd });
+      (S.recent[wid] = S.recent[wid] || []).unshift({ id: r.batch_id, n: r.n_files, files: good.map((p) => p.f.name) });
+      renderDashboard(runHost, wid, r.batch_id, r.n_files);
+      picked.length = 0; renderPicked();
+    } catch (e) { err.replaceChildren(el("div", { class: "error" }, e.message)); }
+    finally { runBtn.disabled = false; }
+  } }, "Process batch");
+
+  const uploadCard = el("div", { class: "card" }, dz, fileInput, list, err,
+    el("div", { class: "btn-row" }, runBtn));
+
+  view.append(controls, uploadCard, runHost, recentUploads(wid));
+}
+
+async function loadProviders(provSel, modelSel) {
+  let provs = [];
+  try { provs = await api("/api/providers"); } catch (_) { return; }
+  for (const p of provs) {
+    const opt = el("option", { value: p.name, ...(p.configured ? {} : { disabled: "disabled" }) },
+      `${p.label}${p.configured ? "" : " (set key in .env)"}`);
+    provSel.append(opt);
+  }
+  const fill = (name) => {
+    const p = provs.find((x) => x.name === name);
+    modelSel.replaceChildren(el("option", { value: "" }, "default model"));
+    for (const m of (p?.models || [])) modelSel.append(el("option", { value: m.id }, m.name || m.id));
+    if (p && !p.reachable && p.configured) modelSel.append(el("option", { value: "", disabled: "disabled" }, `(${p.reason || "unreachable"})`));
   };
+  provSel.addEventListener("change", () => fill(provSel.value));
+}
+async function loadPresets(sel, wid) {
+  try {
+    const { builtin, custom } = await api(`/api/workspaces/${wid}/presets`);
+    for (const name of Object.keys(builtin || {})) sel.append(el("option", { value: name }, name));
+    for (const name of Object.keys(custom || {})) sel.append(el("option", { value: name }, name + " (custom)"));
+  } catch (_) {}
+}
+
+function recentUploads(wid) {
+  const recent = S.recent[wid] || [];
+  const card = el("div", { class: "card" }, el("h2", {}, "Recent uploads"));
+  if (!recent.length) { card.append(el("p", { class: "muted" }, "Batches you process this session show up here.")); return card; }
+  for (const r of recent.slice(0, 8)) card.append(el("div", { class: "bresult" },
+    el("span", { class: "bfn" }, `Batch ${r.id}`),
+    el("span", { class: "bstats" }, el("span", {}, `${r.n} file(s)`), el("span", { class: "faint" }, r.files.slice(0, 3).join(", ") + (r.files.length > 3 ? "…" : ""))),
+    el("button", { class: "btn ghost sm", onclick: (e) => { renderDashboard(e.target.closest(".card").parentElement, wid, r.id, r.n); } }, "View")));
+  return card;
+}
+
+// --- live processing dashboard (real pipeline events; no faked log lines) ---
+function renderDashboard(host, wid, batchId, nFiles) {
+  const counts = { files: 0, completed: 0, inprog: 0, errors: 0, tier1: 0, flagged: 0, total: 0 };
+  const tile = (id, label, cls) => el("div", { class: "dash-tile " + (cls || "") }, el("b", { id: "dt-" + id }, "0"), el("span", {}, label));
+  const tiles = el("div", { class: "dash-tiles" },
+    el("div", { class: "dash-tile" }, el("b", { id: "dt-files" }, "0/" + nFiles), el("span", {}, "files")),
+    tile("completed", "completed"), tile("inprog", "in progress"),
+    tile("errors", "errors", "err"), tile("tier1", "matched (Tier-1)", "tier1"), tile("flagged", "flagged", "flag"));
+  const consoleBox = el("div", { class: "dash-console" });
+  const fill = el("div", { class: "dash-bar-fill", id: "dash-fill" });
+  const statusBadge = el("span", { class: "chip pending" }, "PROCESSING");
+  const summaryLine = el("div", { class: "dash-summary-line" });
+  const done = el("div", { class: "dash-done" });
+  const resultsHost = el("div", {});
+  const card = el("div", { class: "card" },
+    el("div", { class: "dash-head" }, el("div", {}, el("h2", {}, "Processing batch"), el("div", { class: "b-id" }, `${batchId} · ${nFiles} document(s)`)), statusBadge),
+    el("div", { class: "dash-bar" }, fill), tiles,
+    el("h4", { class: "dash-h" }, "AI thinking"), consoleBox, summaryLine, done);
+  host.replaceChildren(card, resultsHost);
+
+  const set = (id, v) => { const e = $("dt-" + id); if (e) e.textContent = v; };
+  const line = (cls, text) => {
+    const t = new Date().toLocaleTimeString();
+    consoleBox.append(el("div", { class: "cline " + (cls || "") }, el("span", { class: "cts" }, t + " "), text));
+    consoleBox.scrollTop = consoleBox.scrollHeight;
+  };
+  counts.inprog = nFiles; set("inprog", nFiles);
+
+  const es = new EventSource(`/api/runs/${batchId}/stream`);
+  es.onmessage = (ev) => {
+    const e = JSON.parse(ev.data);
+    switch (e.type) {
+      case "file_started": line("", `parser: started ${e.file}`); break;
+      case "parsed": counts.total += e.questions || 0; line("ok", `parser:completed extracted ${e.questions} question(s)`); break;
+      case "question_started": line("dim", `  question ${(e.id ?? "")}: ${(e.text || "").slice(0, 70)}`); break;
+      case "retrieved": line("dim", `  retrieval: k=${e.k} top_score=${e.top_score ?? "—"}`); break;
+      case "tier1_reuse": counts.tier1++; set("tier1", counts.tier1); line("ok", `  tier1:reuse approved answer (score ${e.score})`); break;
+      case "library_candidate": line("warn", `  tier1:candidate close match (score ${e.score}) — needs review`); break;
+      case "generated": line("", `  generate: drafted from grounded context`); break;
+      case "attachment": line("", `  attachment: resolving evidence file`); break;
+      case "faithfulness": line(e.passed ? "ok" : "bad", `  faithfulness: ${e.passed ? "passed" : "failed"}`); break;
+      case "flagged": counts.flagged++; set("flagged", counts.flagged); line("warn", `  flagged: ${(e.reason || "").replace(/_/g, " ")}`); break;
+      case "question_done": line(e.confidence === "high" ? "ok" : e.confidence === "low" ? "bad" : "warn", `  done: ${e.status} (${e.confidence})`); break;
+      case "file_done":
+        counts.files++; counts.completed++; counts.inprog = Math.max(0, counts.inprog - 1);
+        set("files", counts.files + "/" + nFiles); set("completed", counts.completed); set("inprog", counts.inprog);
+        $("dash-fill").style.width = Math.round(100 * counts.files / nFiles) + "%";
+        line("ok", `file:done ${e.file} — ${e.answered} answered, ${e.flagged} flagged`); break;
+      case "error": counts.errors++; counts.inprog = Math.max(0, counts.inprog - 1);
+        set("errors", counts.errors); set("inprog", counts.inprog); line("bad", `error: ${e.error}`); break;
+      case "_end":
+        es.close();
+        statusBadge.className = "chip " + (counts.flagged ? "review" : "done");
+        statusBadge.textContent = counts.flagged ? "NEEDS REVIEW" : "DONE";
+        summaryLine.textContent = `Found ${counts.total} total question(s) across the batch. ${counts.flagged} flagged and marked for review in the output files.`;
+        api(`/api/runs/${batchId}/events`).then((snap) => {
+          done.replaceChildren(
+            snap.zip ? el("a", { class: "btn primary", href: `/api/runs/${batchId}/download/${snap.zip}`, download: snap.zip }, "Download all results (.zip)") : el("span"),
+            el("button", { class: "btn ghost", onclick: async () => { await api(`/api/runs/${batchId}/audit`, { method: "POST" }).catch(() => {}); toast("Audit pack written to the run folder.", "good"); } }, "Build audit pack"));
+        });
+        renderBatchResults(resultsHost, batchId);
+        break;
+    }
+  };
+  es.onerror = () => { line("bad", "stream closed"); es.close(); };
+}
+
+async function renderBatchResults(host, batchId) {
+  let files = [];
+  try { files = (await api(`/api/runs/${batchId}/files`)).files; } catch (_) { return; }
+  if (!files.length) return;
+  const rows = files.map((f) => {
+    const s = f.summary || {};
+    const ok = f.ok !== false;
+    const badge = !ok ? el("span", { class: "chip low" }, "ERROR")
+      : (s.flagged ? el("span", { class: "chip review" }, "NEEDS REVIEW") : el("span", { class: "chip done" }, "DONE"));
+    const stats = ok ? el("span", { class: "bstats" },
+      el("span", {}, el("b", {}, String(s.answered ?? 0)), " / ", String(s.total ?? 0), " answered"),
+      el("span", {}, el("b", {}, String(s.flagged ?? 0)), " flagged"),
+      el("span", {}, el("b", {}, String(s.matched_tier1 ?? 0)), " KB-direct"),
+      el("span", {}, el("b", {}, String(s.model_calls ?? 0)), " model calls"),
+      el("span", {}, "~", el("b", {}, String(s.tokens_est ?? 0)), " tokens (est)"))
+      : el("span", { class: "bstats" }, el("span", { class: "bad" }, f.error || "failed"));
+    return el("div", { class: "bresult" }, el("span", { class: "bfn" }, f.file), badge, stats,
+      f.artifact ? el("a", { class: "btn ghost sm", href: `/api/runs/${batchId}/files/${encodeURIComponent(f.stem)}/download`, download: "" }, "Download") : el("span"));
+  });
+  host.replaceChildren(el("div", { class: "card" }, el("h2", {}, "Batch results"), ...rows));
+}
+
+// ============================================================================
+// PART B — Knowledge Base page (Entries / Flagged / Duplicates)
+// ============================================================================
+function kbPage(view, wid) {
+  view.append(el("div", { class: "page-head" }, el("h1", {}, "Knowledge Base"),
+    el("div", { class: "sub" }, "Manage your Q&A entries, review flagged questions, and resolve duplicates.")));
+  const sub = el("div", { class: "subtabs" });
+  const body = el("div", {});
+  const tab = (key, label) => el("div", { class: "subtab" + (kbPage._t === key ? " active" : ""), onclick: () => { kbPage._t = key; render(); } }, label);
+  function render() {
+    sub.replaceChildren(tab("entries", "Entries"), tab("flagged", "Flagged"), tab("duplicates", "Duplicates"));
+    body.replaceChildren();
+    if (kbPage._t === "flagged") flaggedTab(body, wid);
+    else if (kbPage._t === "duplicates") duplicatesTab(body, wid);
+    else entriesTab(body, wid);
+  }
+  kbPage._t = kbPage._t || "entries";
+  view.append(sub, body);
   render();
 }
 
-const STEP = [
-  // 0 — Name
-  (body, st, next) => {
-    body.append(el("p", { class: "why" }, "Name this workspace — usually a client or framework. ",
-      el("span", { class: "eg" }, 'e.g. "Acme — SOC 2".')));
-    const input = el("input", { placeholder: "Acme — SOC 2", value: st.name || "" });
-    const err = el("div", {});
-    const create = el("button", { class: "btn primary", onclick: async () => {
-      try { const ws = await jpost("/api/workspaces", { name: input.value }); st.wid = ws.id; st.name = ws.name; st.i = 1; await loadWorkspaces(); next(); }
-      catch (e) { err.replaceChildren(el("div", { class: "error" }, e.message)); }
-    } }, "Create & continue");
-    body.append(el("label", { class: "field" }, "Workspace name", input), el("div", { class: "btn-row" }, create), err);
-  },
-  // 1 — Model
-  (body, st, next) => {
-    body.append(el("p", { class: "why" }, "Where does the model run? Local is private and needs no key."));
-    const cards = el("div", { class: "choice-cards" },
-      el("div", { class: "choice selected" }, el("div", { class: "tag" }, "Recommended"),
-        el("h3", {}, "Run locally (private, no key)"),
-        el("div", { class: "muted" }, "Point QRESPONDER at Ollama/vLLM in .env. Nothing leaves this host.")),
-      el("div", { class: "choice" }, el("div", { class: "tag" }, "Cloud"),
-        el("h3", {}, "Use an API"),
-        el("div", { class: "muted" }, "Set the provider + key in .env on the server. The key never enters this page.")));
-    cards.children[0].addEventListener("click", () => { cards.children[0].classList.add("selected"); cards.children[1].classList.remove("selected"); });
-    cards.children[1].addEventListener("click", () => { cards.children[1].classList.add("selected"); cards.children[0].classList.remove("selected"); });
-    const active = el("div", { class: "provider" }, `Active: ${S.status.provider} · ${S.status.model}`);
-    const result = el("div", {});
-    const test = el("button", { class: "btn", onclick: async () => {
-      result.replaceChildren(el("span", { class: "muted" }, "Testing…"));
-      await refreshDoctor();
-      if (S.doctor && S.doctor.ok) result.replaceChildren(el("div", { class: "ok-msg" }, "✓ Connection OK — model reachable."));
-      else { const bad = (S.doctor?.checks || []).find((c) => !c.ok); result.replaceChildren(el("div", { class: "error" }, "✗ " + (bad ? bad.detail : "Not reachable. Check .env / that your local model is running."))); }
-    } }, "Test connection");
-    const cont = el("button", { class: "btn primary", onclick: () => { if (!S.doctor || !S.doctor.ok) return; st.i = 2; next(); } });
-    cont.textContent = "Continue";
-    const note = el("div", { class: "muted" }, "A green connection check is required to continue.");
-    body.append(cards, el("div", { class: "card" }, active, el("div", { class: "btn-row" }, test), result), note, el("div", { class: "btn-row" }, cont));
-    if (S.doctor && S.doctor.ok) result.replaceChildren(el("div", { class: "ok-msg" }, "✓ Connection OK."));
-  },
-  // 2 — KB
-  (body, st, next) => {
-    body.append(el("p", { class: "why" }, "Add your security policies, SOC 2 summary, architecture docs — anything you'd cite when answering ",
-      el("span", { class: "eg" }, "(PDF/DOCX/MD/TXT).")));
-    body.append(assetManager(st.wid, "kb"));
-    body.append(el("p", { class: "muted" }, "Tags scope which docs answer which questionnaire (e.g. tag SOC 2 docs ‘soc2’)."));
-    body.append(el("div", { class: "btn-row" }, el("button", { class: "btn primary", onclick: () => { st.i = 3; next(); } }, "Continue")));
-  },
-  // 3 — Approved answers (optional)
-  (body, st, next) => {
-    body.append(el("p", { class: "why" }, "Answers you've already written and trust — used first and verbatim. Optional: the flywheel builds this as you review."));
-    body.append(qaManager(st.wid));
-    body.append(el("div", { class: "btn-row" }, el("button", { class: "btn primary", onclick: () => { st.i = 4; next(); } }, "Continue"),
-      el("button", { class: "btn ghost", onclick: () => { st.i = 4; next(); } }, "Skip")));
-  },
-  // 4 — Evidence (optional)
-  (body, st, next) => {
-    body.append(el("p", { class: "why" }, "Files that get attached to “please attach…” questions — the real SOC 2 PDF, IR plan. Not used as answer text."));
-    body.append(assetManager(st.wid, "evidence"));
-    body.append(el("div", { class: "btn-row" }, el("button", { class: "btn primary", onclick: () => { st.i = 5; next(); } }, "Continue"),
-      el("button", { class: "btn ghost", onclick: () => { st.i = 5; next(); } }, "Skip")));
-  },
-  // 5 — Ready
-  (body, st) => {
-    body.append(el("p", { class: "why" }, "You're set. Upload a questionnaire and let QRESPONDER draft grounded, cited answers — you review every one."));
-    body.append(el("div", { class: "btn-row" }, el("button", { class: "btn primary", onclick: async () => {
-      S.current = st.wid; await loadWorkspaces(); renderSwitcher(); showHome("answer");
-    } }, "Answer a questionnaire →")));
-  },
-];
+// --- Tab 1: Entries ---
+async function entriesTab(host, wid) {
+  let entries = [];
+  try { entries = (await api(`/api/workspaces/${wid}/qa`)).entries; } catch (e) { host.append(el("div", { class: "error" }, e.message)); return; }
+  const cats = [...new Set(entries.map((e) => (e.tags && e.tags[0]) || "uncategorized"))].sort();
+
+  const stats = el("div", { class: "statgrid" },
+    el("div", { class: "statcard" }, el("div", { class: "v grad" }, String(entries.length)), el("div", { class: "l" }, "Total Q&A pairs")),
+    el("div", { class: "statcard" }, el("div", { class: "v" }, String(cats.length)), el("div", { class: "l" }, "Categories")));
+
+  const search = el("input", { class: "search", type: "search", placeholder: "Search questions & answers…" });
+  const catFilter = el("select", {}, el("option", { value: "" }, "All categories"), ...cats.map((c) => el("option", { value: c }, c)));
+  const tblHost = el("div", {});
+  const toolbar = el("div", { class: "toolbar" },
+    el("div", { class: "grow" }, search), catFilter, el("div", { class: "spacer" }),
+    el("button", { class: "btn primary sm", onclick: () => openQaModal(wid, null, () => entriesTab(host.replaceChildren() || host, wid)) }, "+ Add Q&A"),
+    el("button", { class: "btn ghost sm", onclick: () => openImportModal(wid, () => entriesTab(host.replaceChildren() || host, wid)) }, "Import"),
+    el("button", { class: "btn ghost sm", onclick: () => exportMenu(wid) }, "Export"));
+
+  function draw() {
+    const q = search.value.trim().toLowerCase();
+    const cat = catFilter.value;
+    const rows = entries.filter((e) => {
+      const ecat = (e.tags && e.tags[0]) || "uncategorized";
+      if (cat && ecat !== cat) return false;
+      if (q && !(e.question.toLowerCase().includes(q) || (e.answer || "").toLowerCase().includes(q))) return false;
+      return true;
+    });
+    if (!rows.length) { tblHost.replaceChildren(el("div", { class: "empty-teach" }, el("strong", {}, "No matching entries"), entries.length ? " — adjust the search or filter." : " — add your first approved answer.")); return; }
+    const table = el("table", { class: "tbl" }, el("thead", {}, el("tr", {},
+      el("th", {}, "Category"), el("th", {}, "Question"), el("th", {}, "Answer"), el("th", { class: "acts" }, "Actions"))));
+    const tb = el("tbody", {});
+    for (const e of rows) {
+      const ecat = (e.tags && e.tags[0]) || "uncategorized";
+      tb.append(el("tr", {},
+        el("td", {}, el("span", { class: "cat-badge" }, ecat)),
+        el("td", { class: "q" }, el("div", { class: "truncate" }, e.question)),
+        el("td", { class: "a" }, el("div", { class: "truncate" }, e.answer || "")),
+        el("td", { class: "acts" },
+          el("button", { class: "btn ghost sm", onclick: () => openQaModal(wid, e, () => entriesTab(host.replaceChildren() || host, wid)) }, "Edit"),
+          el("button", { class: "btn danger sm", onclick: async () => {
+            if (!confirm("Delete this Q&A entry? This cannot be undone.")) return;
+            await api(`/api/workspaces/${wid}/qa/${e.index}`, { method: "DELETE" }); toast("Entry deleted."); entriesTab(host.replaceChildren() || host, wid);
+          } }, "Del"))));
+    }
+    table.append(tb);
+    tblHost.replaceChildren(el("div", { class: "card flush" }, el("div", { class: "tbl-scroll" }, table)));
+  }
+  search.addEventListener("input", draw);
+  catFilter.addEventListener("change", draw);
+  host.append(stats, toolbar, tblHost);
+  draw();
+}
+
+function openQaModal(wid, entry, onSaved) {
+  const isEdit = !!entry;
+  const catInput = el("input", { value: entry ? ((entry.tags && entry.tags[0]) || "") : "", placeholder: "e.g. security, privacy" });
+  const q = el("textarea", { placeholder: "The question as it appears in questionnaires" }, entry ? entry.question : "");
+  const a = el("textarea", { placeholder: "Your approved answer (used first, verbatim)" }, entry ? entry.answer : "");
+  const err = el("div", {});
+  const bg = el("div", { class: "modal-bg" });
+  const close = () => bg.remove();
+  bg.addEventListener("click", (e) => { if (e.target === bg) close(); });
+  const save = el("button", { class: "btn primary", onclick: async () => {
+    if (!q.value.trim() || !a.value.trim()) { err.replaceChildren(el("div", { class: "error" }, "Question and answer are required.")); return; }
+    const tags = catInput.value.trim() ? [catInput.value.trim()] : [];
+    try {
+      if (isEdit) await jput(`/api/workspaces/${wid}/qa/${entry.index}`, { question: q.value, answer: a.value, tags });
+      else await jpost(`/api/workspaces/${wid}/qa`, { question: q.value, answer: a.value, tags });
+      close(); toast(isEdit ? "Entry updated." : "Entry added.", "good"); onSaved && onSaved();
+    } catch (e) { err.replaceChildren(el("div", { class: "error" }, e.message)); }
+  } }, "Save changes");
+  bg.append(el("div", { class: "modal" },
+    el("div", { class: "modal-head" }, el("h2", {}, isEdit ? "Edit Q&A" : "Add Q&A"), el("span", { class: "x", onclick: close }, "×")),
+    el("div", { class: "modal-body" },
+      el("label", { class: "field" }, "Category", catInput),
+      el("label", { class: "field" }, "Question", q),
+      el("label", { class: "field" }, "Answer", a), err),
+    el("div", { class: "modal-foot" }, el("button", { class: "btn ghost", onclick: close }, "Cancel"), save)));
+  document.body.append(bg);
+}
+
+function openImportModal(wid, onDone) {
+  const fileInput = el("input", { type: "file", multiple: "multiple", accept: ".csv,.json,.xlsx,.xlsm,.md,.markdown,.txt,.docx" });
+  const res = el("div", {});
+  const bg = el("div", { class: "modal-bg" });
+  const close = () => bg.remove();
+  bg.addEventListener("click", (e) => { if (e.target === bg) close(); });
+  const imp = el("button", { class: "btn primary", onclick: async () => {
+    if (!fileInput.files.length) return;
+    const fd = new FormData();
+    for (const f of fileInput.files) fd.append("files", f);
+    res.replaceChildren(el("span", { class: "muted" }, "Importing…"));
+    try {
+      const r = await api(`/api/workspaces/${wid}/qa/import`, { method: "POST", body: fd });
+      const added = r.added ?? r.imported ?? 0, updated = r.updated ?? 0, skipped = (r.skipped ?? 0) + ((r.rejected || []).length);
+      res.replaceChildren(el("div", { class: "ok-msg" }, `✓ ${added} added, ${updated} updated, ${skipped} skipped. Library now ${r.total ?? "?"} entries.`));
+      (r.rejected || []).forEach((x) => res.append(el("div", { class: "faint" }, `skipped ${x.name}: ${x.reason}`)));
+      onDone && onDone();
+    } catch (e) { res.replaceChildren(el("div", { class: "error" }, e.message)); }
+  } }, "Import");
+  bg.append(el("div", { class: "modal" },
+    el("div", { class: "modal-head" }, el("h2", {}, "Import Q&A"), el("span", { class: "x", onclick: close }, "×")),
+    el("div", { class: "modal-body" },
+      el("p", { class: "muted" }, "CSV / JSON / XLSX / Markdown / DOCX. Each pair routes through the library (dedup + version)."),
+      fileInput, res),
+    el("div", { class: "modal-foot" }, el("button", { class: "btn ghost", onclick: close }, "Close"), imp)));
+  document.body.append(bg);
+}
+
+function exportMenu(wid) {
+  const bg = el("div", { class: "modal-bg" });
+  const close = () => bg.remove();
+  bg.addEventListener("click", (e) => { if (e.target === bg) close(); });
+  bg.append(el("div", { class: "modal" },
+    el("div", { class: "modal-head" }, el("h2", {}, "Export library"), el("span", { class: "x", onclick: close }, "×")),
+    el("div", { class: "modal-body" }, el("p", { class: "muted" }, "Download the full answer library."),
+      el("div", { class: "btn-row" },
+        el("a", { class: "btn primary", href: `/api/workspaces/${wid}/qa/export?fmt=csv`, download: "qa_library.csv", onclick: close }, "Export CSV"),
+        el("a", { class: "btn ghost", href: `/api/workspaces/${wid}/qa/export?fmt=json`, download: "qa_library.json", onclick: close }, "Export JSON")))));
+  document.body.append(bg);
+}
+
+// --- Tab 2: Flagged (cross-file resolve) ---
+async function flaggedTab(host, wid) {
+  let groups = [];
+  try { groups = (await api(`/api/workspaces/${wid}/flagged`)).groups; } catch (e) { host.append(el("div", { class: "error" }, e.message)); return; }
+  const selected = new Set();
+
+  const count = el("div", { class: "statgrid" },
+    el("div", { class: "statcard" }, el("div", { class: "v grad" }, String(groups.length)), el("div", { class: "l" }, "Unresolved")));
+
+  const chips = el("div", { class: "filter-chips" },
+    el("span", { class: "fchip active" }, "Unresolved"),
+    el("span", { class: "fchip", title: "Resolution history isn't persisted across restarts in this local tool." }, "Resolved"),
+    el("span", { class: "fchip" }, "Dismissed"), el("span", { class: "fchip" }, "All"));
+
+  const actions = el("div", { class: "toolbar" }, chips, el("div", { class: "spacer" }),
+    el("a", { class: "btn ghost sm", href: `/api/workspaces/${wid}/flagged/export`, download: "flagged.csv" }, "Export CSV"),
+    el("button", { class: "btn ghost sm", onclick: async () => {
+      try { const r = await api(`/api/workspaces/${wid}/flagged/sync`, { method: "POST" }); toast(`Synced — cleared ${r.cleared} matched item(s).`, "good"); flaggedTab(host.replaceChildren() || host, wid); }
+      catch (e) { toast(e.message, "bad"); }
+    } }, "Sync with KB"),
+    el("button", { class: "btn ghost sm", onclick: () => { S.page = "kb"; kbPage._t = "duplicates"; go("kb"); } }, "Remove Duplicates"));
+
+  const helper = el("div", { class: "helper-line", html:
+    "CSV round-trip: <strong>Export as CSV</strong>, fill the blank answer cells, <strong>Import</strong> them from the Entries tab, then <strong>Sync with KB</strong> to clear matched items." });
+
+  const cards = el("div", {});
+  if (!groups.length) {
+    cards.append(el("div", { class: "empty-teach" }, el("strong", {}, "Nothing flagged"), " — process some questionnaires; unresolved questions group here across files."));
+  } else {
+    for (const g of groups) cards.append(flaggedCard(wid, g, selected, () => flaggedTab(host.replaceChildren() || host, wid)));
+  }
+  host.append(count, actions, helper, cards);
+}
+
+function flaggedCard(wid, g, selected, reload) {
+  const editor = el("div", { class: "hidden" });
+  const card = el("div", { class: "item" });
+  const cb = el("input", { type: "checkbox", onchange: (e) => { e.target.checked ? selected.add(g.question) : selected.delete(g.question); } });
+  const head = el("div", { class: "item-head" },
+    el("div", { style: "display:flex;gap:10px;align-items:flex-start" }, cb, el("div", { class: "q-text" }, g.question)),
+    el("div", { class: "badges" }, el("span", { class: "chip pending" }, "PENDING"), el("span", { class: "chip reason" }, (g.reason || "").replace(/_/g, " "))));
+  const meta = el("div", { class: "muted" }, `${g.count} occurrence(s) / ${g.files.length} file(s) · Affected files: ${g.files.join(", ")}`);
+
+  const catInput = el("input", { class: "tagedit", placeholder: "category (optional)" });
+  const ta = el("textarea", {}, g.draft || "");
+  const status = el("span", { class: "muted" });
+  const submit = el("button", { class: "btn primary", onclick: async () => {
+    if (!ta.value.trim()) return;
+    submit.disabled = true;
+    try {
+      const r = await api(`/api/workspaces/${wid}/flagged/resolve`, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: g.question, answer: ta.value, tags: catInput.value.trim() ? [catInput.value.trim()] : [] }) });
+      toast(`Resolved in ${r.updated} file(s)` + (r.trained ? " · added to library once" : ""), "good");
+      setTimeout(reload, 500);
+    } catch (e) { status.textContent = "Error: " + e.message; submit.disabled = false; }
+  } }, "Submit answer");
+  editor.append(el("div", { class: "panel" }, el("h4", {}, "Provide answer — inserted into every affected file and saved to the library once"),
+    el("label", { class: "field" }, "Category", catInput),
+    el("label", { class: "field" }, "Answer", ta),
+    el("div", { class: "actions" }, submit, status)));
+
+  const provide = el("button", { class: "btn primary sm", onclick: () => editor.classList.toggle("hidden") }, "Provide Answer");
+  const dismiss = el("button", { class: "btn ghost sm", onclick: () => { card.style.opacity = .45; provide.disabled = true; } }, "Dismiss");
+  card.append(head, meta, el("div", { class: "actions" }, provide, dismiss), editor);
+  return card;
+}
+
+// --- Tab 3: Duplicates (kb-check) ---
+async function duplicatesTab(host, wid) {
+  host.append(el("p", { class: "muted" }, "A read-only scan of your library for near-duplicates and internal contradictions. Merging is opt-in and version-bumps the canonical (never deletes); contradictions are shown for you to resolve."));
+  const body = el("div", {});
+  host.append(body);
+  let rep;
+  try { rep = await api(`/api/workspaces/${wid}/kb-check`); } catch (e) { body.append(el("div", { class: "error" }, e.message)); return; }
+  const dups = rep.duplicates || [], cons = rep.contradictions || [];
+
+  const stats = el("div", { class: "statgrid" },
+    el("div", { class: "statcard" }, el("div", { class: "v grad" }, String(dups.length)), el("div", { class: "l" }, "Near-duplicate pairs")),
+    el("div", { class: "statcard" }, el("div", { class: "v" }, String(cons.length)), el("div", { class: "l" }, "Contradictions")));
+  body.append(stats);
+
+  if (dups.length) {
+    const merge = el("button", { class: "btn primary sm", onclick: async () => {
+      if (!confirm(`Merge ${dups.length} near-duplicate pair(s)? This version-bumps the canonical entry — nothing is deleted.`)) return;
+      try { const r = await api(`/api/workspaces/${wid}/kb-check/merge`, { method: "POST" }); toast(`Merged ${r.merged} pair(s).`, "good"); duplicatesTab(host.replaceChildren() || host, wid); }
+      catch (e) { toast(e.message, "bad"); }
+    } }, "Remove Duplicates");
+    body.append(el("div", { class: "toolbar" }, el("h2", { style: "margin:0" }, "Near-duplicates"), el("div", { class: "spacer" }), merge));
+    for (const d of dups) body.append(dupPair(d, "duplicate"));
+  }
+  if (cons.length) {
+    body.append(el("h2", { style: "margin-top:18px" }, "Contradictions — resolve manually"));
+    for (const c of cons) body.append(dupPair(c, "contradiction"));
+  }
+  if (!dups.length && !cons.length) body.append(el("div", { class: "empty-teach" }, el("strong", {}, "Library looks clean"), " — no near-duplicates or contradictions found."));
+}
+
+function dupPair(p, kind) {
+  const sim = p.similarity != null ? ` · similarity ${Math.round(p.similarity * 100)}%` : "";
+  return el("div", { class: "item" },
+    el("div", { class: "item-head" }, el("span", { class: "chip " + (kind === "contradiction" ? "low" : "medium") }, kind), el("span", { class: "faint" }, sim)),
+    el("div", { class: "conflict-grid", style: "display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px" },
+      el("div", { class: "panel" }, el("h4", {}, "Entry A"), el("div", {}, p.a_question || ""), el("div", { class: "muted" }, p.a_answer || "")),
+      el("div", { class: "panel" }, el("h4", {}, "Entry B"), el("div", {}, p.b_question || ""), el("div", { class: "muted" }, p.b_answer || ""))));
+}
+
+// ============================================================================
+// Settings page (model, assets, engine, analytics, danger)
+// ============================================================================
+async function settingsPage(view, wid) {
+  view.append(el("div", { class: "page-head" }, el("h1", {}, "Settings"),
+    el("div", { class: "sub" }, "Model, knowledge assets, engine behavior, and workspace analytics — all local.")));
+  view.append(el("div", { class: "warn-banner" }, "This UI has no authentication and holds your full security posture. Keep it on 127.0.0.1 — don't expose it to a network without putting auth in front."));
+
+  // Analytics (Phase 10 D) — local read only.
+  try {
+    const s = await api(`/api/workspaces/${wid}/stats`);
+    const reasons = Object.entries(s.flagged_by_reason || {}).map(([k, v]) => `${v} ${k.replace(/_/g, " ")}`).join(", ");
+    view.append(el("div", { class: "card" }, el("h2", {}, "Analytics"),
+      el("div", { class: "statgrid" },
+        el("div", { class: "statcard" }, el("div", { class: "v" }, String(s.n_runs)), el("div", { class: "l" }, "Runs")),
+        el("div", { class: "statcard" }, el("div", { class: "v" }, String(s.total_questions)), el("div", { class: "l" }, "Questions")),
+        el("div", { class: "statcard" }, el("div", { class: "v grad" }, Math.round(s.completion_rate * 100) + "%"), el("div", { class: "l" }, "Completion")),
+        el("div", { class: "statcard" }, el("div", { class: "v" }, Math.round(s.auto_answer_rate_high_med * 100) + "%"), el("div", { class: "l" }, "Auto (high+med)")),
+        el("div", { class: "statcard" }, el("div", { class: "v" }, String(s.flagged)), el("div", { class: "l" }, "Flagged"))),
+      reasons ? el("p", { class: "muted" }, "Flagged: " + reasons) : el("span"),
+      el("p", { class: "muted" }, `~${s.time_saved_minutes} min saved — ${s.time_saved_note}`)));
+  } catch (_) {}
+
+  // Model status
+  const dres = el("div", {});
+  view.append(el("div", { class: "card" }, el("h2", {}, "Model"),
+    el("div", { class: "model-status " + (S.status.active ? "ok" : "bad") }, el("span", { class: "ms-dot" }), el("span", { class: "ms-text" }, `${S.status.provider}/${S.status.model}`)),
+    el("p", { class: "muted" }, "Provider and key live in .env on the server — never in this page. Local models need no key."),
+    el("div", { class: "btn-row" }, el("button", { class: "btn", onclick: async () => { dres.textContent = "Testing…"; await refreshDoctor(); await refreshStatus(); dres.replaceChildren(S.doctor?.ok ? el("span", { class: "ok-msg" }, "✓ reachable") : el("div", { class: "error" }, "✗ not reachable — check .env")); } }, "Test connection")), dres));
+
+  // KB docs + evidence
+  view.append(el("div", { class: "card" }, el("h2", {}, "Knowledge base documents"),
+    el("p", { class: "muted" }, "Cited when answering. Tag docs to scope which answer which questionnaire."), assetManager(wid, "kb")));
+  view.append(el("div", { class: "card" }, el("h2", {}, "Evidence vault"),
+    el("p", { class: "muted" }, "Attached to “please attach…” questions; not used as answer text."), assetManager(wid, "evidence")));
+
+  // Engine settings
+  const ws = await api(`/api/workspaces/${wid}`);
+  const set = ws.settings || {};
+  const modeSel = el("select", {}, ...["in_context", "retrieval"].map((m) => el("option", { value: m, ...(set.kb_mode === m ? { selected: "selected" } : {}) }, m)));
+  const faith = el("input", { type: "checkbox", ...(set.verify_faithfulness !== false ? { checked: "checked" } : {}) });
+  const conflict = el("input", { type: "checkbox", ...(set.detect_conflicts !== false ? { checked: "checked" } : {}) });
+  const tagsDefault = el("input", { value: (set.tags || []).join(", "), placeholder: "default tag scope" });
+  const saveRes = el("div", {});
+  view.append(el("div", { class: "card" }, el("h2", {}, "Engine settings"),
+    el("label", { class: "field" }, "Retrieval mode (in-context dumps the KB; retrieval ranks it — better for large KBs)", modeSel),
+    el("label", { class: "field" }, el("span", {}, faith, " Verify faithfulness (check each claim is entailed by its citation)")),
+    el("label", { class: "field" }, el("span", {}, conflict, " Detect cross-source conflicts (flag contradictory answers)")),
+    el("label", { class: "field" }, "Default tag scope", tagsDefault),
+    el("div", { class: "btn-row" }, el("button", { class: "btn primary", onclick: async () => {
+      try { await jpatch(`/api/workspaces/${wid}/settings`, { kb_mode: modeSel.value, verify_faithfulness: faith.checked, detect_conflicts: conflict.checked, tags: csv(tagsDefault.value) });
+        saveRes.replaceChildren(el("span", { class: "ok-msg" }, "✓ saved")); }
+      catch (e) { saveRes.replaceChildren(el("div", { class: "error" }, e.message)); }
+    } }, "Save settings")), saveRes));
+
+  // Danger zone
+  view.append(el("div", { class: "card" }, el("h2", {}, "Danger zone"),
+    el("div", { class: "btn-row" }, el("button", { class: "btn danger", onclick: async () => {
+      if (!confirm(`Delete workspace "${S.current}" and all its files? This cannot be undone.`)) return;
+      await api(`/api/workspaces/${wid}`, { method: "DELETE" }); S.current = null; await loadWorkspaces();
+      if (S.workspaces.length) { S.current = S.workspaces[0].id; renderSwitcher(); go("upload"); } else { hideChrome(); showWizard(); }
+    } }, "Delete this workspace"))));
+}
 
 // ---- asset manager (KB / evidence) with drag-drop + tag editor ----
 function assetManager(wid, kind) {
@@ -150,7 +622,6 @@ function assetManager(wid, kind) {
   fileInput.addEventListener("change", () => upload(fileInput.files));
   const list = el("ul", { class: "assets" });
   const err = el("div", {});
-
   async function upload(files) {
     if (!files || !files.length) return;
     const fd = new FormData();
@@ -160,16 +631,13 @@ function assetManager(wid, kind) {
     catch (e) { err.replaceChildren(el("div", { class: "error" }, e.message)); }
   }
   function render(files) {
-    if (!files.length) {
-      list.replaceChildren(el("li", {}, el("div", { class: "empty-teach" },
-        kind === "kb" ? el("span", {}, el("strong", {}, "Start by adding your security policies"), " — the documents you'd cite when answering.")
-                      : el("span", {}, el("strong", {}, "Add evidence files"), " — the docs attached to “please attach…” questions."))));
-      return;
-    }
+    if (!files.length) { list.replaceChildren(el("li", {}, el("div", { class: "empty-teach" },
+      kind === "kb" ? el("span", {}, el("strong", {}, "Add your security policies"), " — the documents you'd cite when answering.")
+                    : el("span", {}, el("strong", {}, "Add evidence files"), " — attached to “please attach…” questions.")))); return; }
     list.replaceChildren(...files.map((f) => {
       const tagInput = el("input", { class: "tagedit", value: (f.tags || []).join(", "), placeholder: "tags (comma-sep)" });
-      const save = el("button", { class: "btn ghost", onclick: async () => { const r = await api(`/api/workspaces/${wid}/${kind}/${encodeURIComponent(f.name)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tags: tagInput.value.split(",").map(s => s.trim()).filter(Boolean) }) }); render(r.files); } }, "Save tags");
-      const del = el("button", { class: "btn danger ghost", onclick: async () => { const r = await api(`/api/workspaces/${wid}/${kind}/${encodeURIComponent(f.name)}`, { method: "DELETE" }); render(r.files); } }, "Remove");
+      const save = el("button", { class: "btn ghost sm", onclick: async () => { const r = await jpatch(`/api/workspaces/${wid}/${kind}/${encodeURIComponent(f.name)}`, { tags: csv(tagInput.value) }); render(r.files); } }, "Save tags");
+      const del = el("button", { class: "btn danger sm", onclick: async () => { const r = await api(`/api/workspaces/${wid}/${kind}/${encodeURIComponent(f.name)}`, { method: "DELETE" }); render(r.files); } }, "Remove");
       return el("li", {}, el("span", { class: "fname" }, f.name), tagInput, save, del);
     }));
   }
@@ -178,330 +646,91 @@ function assetManager(wid, kind) {
   return wrap;
 }
 
-// ---- approved-answers manager ----
-function qaManager(wid) {
+// ============================================================================
+// Setup wizard (first run / new workspace)
+// ============================================================================
+const WIZ_STEPS = ["Name", "Model", "Knowledge base", "Approved answers", "Evidence", "Ready"];
+function showWizard() {
+  const st = { i: 0, wid: null };
+  $("ws-switcher").classList.add("hidden");
+  const render = () => {
+    const pills = el("div", { class: "steps" }, ...WIZ_STEPS.map((s, i) =>
+      el("span", { class: "step-pill " + (i === st.i ? "active" : i < st.i ? "done" : "") }, `${i + 1}. ${s}`)));
+    const body = el("div", {});
+    root().replaceChildren(el("div", { class: "card" }, el("h1", {}, "Set up a workspace"), pills, body));
+    STEP[st.i](body, st, render);
+  };
+  render();
+}
+const STEP = [
+  (body, st, next) => {
+    body.append(el("p", { class: "why" }, "Name this workspace — usually a client or framework. ", el("span", { class: "eg" }, 'e.g. "Acme — SOC 2".')));
+    const input = el("input", { placeholder: "Acme — SOC 2", value: st.name || "" });
+    const err = el("div", {});
+    body.append(el("label", { class: "field" }, "Workspace name", input), el("div", { class: "btn-row" },
+      el("button", { class: "btn primary", onclick: async () => {
+        try { const ws = await jpost("/api/workspaces", { name: input.value }); st.wid = ws.id; st.name = ws.name; st.i = 1; await loadWorkspaces(); next(); }
+        catch (e) { err.replaceChildren(el("div", { class: "error" }, e.message)); }
+      } }, "Create & continue")), err);
+  },
+  (body, st, next) => {
+    body.append(el("p", { class: "why" }, "Where does the model run? Local is private and needs no key."));
+    const active = el("div", { class: "model-status " + (S.status.active ? "ok" : "bad") }, el("span", { class: "ms-dot" }), el("span", { class: "ms-text" }, `${S.status.provider}/${S.status.model}`));
+    const result = el("div", {});
+    const test = el("button", { class: "btn", onclick: async () => {
+      result.replaceChildren(el("span", { class: "muted" }, "Testing…"));
+      await refreshDoctor(); await refreshStatus();
+      if (S.doctor && S.doctor.ok) result.replaceChildren(el("div", { class: "ok-msg" }, "✓ Connection OK — model reachable."));
+      else { const bad = (S.doctor?.checks || []).find((c) => !c.ok); result.replaceChildren(el("div", { class: "error" }, "✗ " + (bad ? bad.detail : "Not reachable. Check .env / that your local model is running."))); }
+    } }, "Test connection");
+    const cont = el("button", { class: "btn primary", onclick: () => { if (!S.doctor || !S.doctor.ok) return; st.i = 2; next(); } }, "Continue");
+    body.append(el("div", { class: "card" }, active, el("div", { class: "btn-row" }, test), result),
+      el("div", { class: "muted" }, "A green connection check is required to continue."), el("div", { class: "btn-row" }, cont));
+    if (S.doctor && S.doctor.ok) result.replaceChildren(el("div", { class: "ok-msg" }, "✓ Connection OK."));
+  },
+  (body, st, next) => {
+    body.append(el("p", { class: "why" }, "Add your security policies, SOC 2 summary, architecture docs — anything you'd cite ", el("span", { class: "eg" }, "(PDF/DOCX/MD/TXT).")));
+    body.append(assetManager(st.wid, "kb"));
+    body.append(el("div", { class: "btn-row" }, el("button", { class: "btn primary", onclick: () => { st.i = 3; next(); } }, "Continue")));
+  },
+  (body, st, next) => {
+    body.append(el("p", { class: "why" }, "Answers you've already written and trust — used first and verbatim. Optional: the flywheel builds this as you review."));
+    body.append(qaQuickAdd(st.wid));
+    body.append(el("div", { class: "btn-row" }, el("button", { class: "btn primary", onclick: () => { st.i = 4; next(); } }, "Continue"),
+      el("button", { class: "btn ghost", onclick: () => { st.i = 4; next(); } }, "Skip")));
+  },
+  (body, st, next) => {
+    body.append(el("p", { class: "why" }, "Files attached to “please attach…” questions — the real SOC 2 PDF, IR plan. Not used as answer text."));
+    body.append(assetManager(st.wid, "evidence"));
+    body.append(el("div", { class: "btn-row" }, el("button", { class: "btn primary", onclick: () => { st.i = 5; next(); } }, "Continue"),
+      el("button", { class: "btn ghost", onclick: () => { st.i = 5; next(); } }, "Skip")));
+  },
+  (body, st) => {
+    body.append(el("p", { class: "why" }, "You're set. Upload a questionnaire and let QRESPONDER draft grounded, cited answers — you review every one."));
+    body.append(el("div", { class: "btn-row" }, el("button", { class: "btn primary", onclick: async () => {
+      S.current = st.wid; await loadWorkspaces(); renderSwitcher(); renderNav(); go("upload");
+    } }, "Go to upload →")));
+  },
+];
+function qaQuickAdd(wid) {
   const wrap = el("div", {});
   const q = el("input", { placeholder: "Question" });
   const a = el("textarea", { placeholder: "Approved answer" });
-  const t = el("input", { placeholder: "tags (comma-sep)" });
   const list = el("ul", { class: "assets" });
-  const add = el("button", { class: "btn", onclick: async () => {
-    if (!q.value.trim() || !a.value.trim()) return;
-    await jpost(`/api/workspaces/${wid}/qa`, { question: q.value, answer: a.value, tags: t.value.split(",").map(s => s.trim()).filter(Boolean) });
-    q.value = a.value = t.value = ""; load();
-  } }, "Add approved answer");
   async function load() {
     const { entries } = await api(`/api/workspaces/${wid}/qa`);
-    if (!entries.length) { list.replaceChildren(el("li", {}, el("div", { class: "empty-teach" }, el("strong", {}, "No approved answers yet"), " — add any you already trust, or let the flywheel build them as you review."))); return; }
+    if (!entries.length) { list.replaceChildren(el("li", {}, el("div", { class: "empty-teach" }, el("strong", {}, "No approved answers yet"), " — add any you trust, or let the flywheel build them as you review."))); return; }
     list.replaceChildren(...entries.map((e) => el("li", {},
-      el("span", { class: "fname" }, `${e.question} → ${e.answer.slice(0, 60)}${e.answer.length > 60 ? "…" : ""}  (v${e.version})`),
-      el("button", { class: "btn danger ghost", onclick: async () => { await api(`/api/workspaces/${wid}/qa/${e.index}`, { method: "DELETE" }); load(); } }, "Delete"))));
+      el("span", { class: "fname" }, `${e.question} → ${(e.answer || "").slice(0, 60)}${(e.answer || "").length > 60 ? "…" : ""}  (v${e.version})`),
+      el("button", { class: "btn danger sm", onclick: async () => { await api(`/api/workspaces/${wid}/qa/${e.index}`, { method: "DELETE" }); load(); } }, "Delete"))));
   }
   load();
-  wrap.append(el("div", { class: "form" }, el("label", { class: "field" }, "Question", q), el("label", { class: "field" }, "Answer", a), el("label", { class: "field" }, "Tags", t), el("div", { class: "btn-row" }, add)), list);
+  wrap.append(el("div", { class: "form" }, el("label", { class: "field" }, "Question", q), el("label", { class: "field" }, "Answer", a),
+    el("div", { class: "btn-row" }, el("button", { class: "btn", onclick: async () => {
+      if (!q.value.trim() || !a.value.trim()) return;
+      await jpost(`/api/workspaces/${wid}/qa`, { question: q.value, answer: a.value }); q.value = a.value = ""; load();
+    } }, "Add approved answer"))), list);
   return wrap;
-}
-
-// ---- workspace home (tabs: Answer | Settings) ----
-function showHome(tab = "answer") {
-  renderSwitcher();
-  const wid = S.current;
-  const tabs = el("div", { class: "tabs" },
-    el("div", { class: "tab " + (tab === "answer" ? "active" : ""), onclick: () => showHome("answer") }, "Answer a questionnaire"),
-    el("div", { class: "tab " + (tab === "flagged" ? "active" : ""), onclick: () => showHome("flagged") }, "Flagged"),
-    el("div", { class: "tab " + (tab === "settings" ? "active" : ""), onclick: () => showHome("settings") }, "Settings"));
-  const view = el("div", {});
-  root().replaceChildren(tabs, view);
-  if (tab === "answer") answerView(view, wid);
-  else if (tab === "flagged") flaggedView(view, wid);
-  else settingsView(view, wid);
-}
-
-// ---- cross-file flagged tab (Phase 8 E) ----
-async function flaggedView(view, wid) {
-  view.append(el("p", { class: "muted" }, "Unresolved questions grouped across all this workspace's runs. Answer once → inserted everywhere and saved to the library."));
-  const host = el("div", {});
-  view.append(host);
-  async function load() {
-    const { groups } = await api(`/api/workspaces/${wid}/flagged`);
-    if (!groups.length) { host.replaceChildren(el("div", { class: "empty-teach" }, el("strong", {}, "Nothing flagged"), " — run some questionnaires; unresolved items show up here.")); return; }
-    host.replaceChildren(...groups.map((g) => {
-      const ta = el("textarea", {}, g.draft || "");
-      const tags = el("input", { class: "tagedit", placeholder: "tags (optional)" });
-      const status = el("span", { class: "muted" });
-      const btn = el("button", { class: "btn primary", onclick: async () => {
-        if (!ta.value.trim()) return;
-        btn.disabled = true;
-        try {
-          const r = await api(`/api/workspaces/${wid}/flagged/resolve`, { method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ question: g.question, answer: ta.value, tags: tags.value.split(",").map(s => s.trim()).filter(Boolean) }) });
-          status.textContent = `✓ resolved in ${r.updated} file(s)` + (r.trained ? " · added to library" : "");
-          setTimeout(load, 600);
-        } catch (e) { status.textContent = "Error: " + e.message; btn.disabled = false; }
-      } }, "Resolve everywhere");
-      return el("div", { class: "item" },
-        el("div", { class: "item-head" }, el("div", { class: "q-text" }, g.question),
-          el("span", { class: "chip reason" }, `${g.count} file(s)`)),
-        el("div", { class: "muted" }, "Appears in: " + g.files.join(", ")),
-        el("div", { class: "answer-box" }, ta),
-        el("div", { class: "actions" }, tags, btn, status));
-    }));
-  }
-  load();
-}
-
-// ---- answer + review ----
-function answerView(view, wid) {
-  const card = el("div", { class: "card" }, el("h1", {}, "Answer a questionnaire"),
-    el("p", { class: "muted" }, "Upload an Excel/Word/PDF questionnaire. Every answer is grounded, cited, and yours to review — and each accept trains this workspace."));
-  const file = el("input", { type: "file", accept: ".xlsx,.xlsm,.docx,.pdf" });
-  const tags = el("input", { placeholder: "tag scope (optional, defaults to workspace)" });
-  const mode = el("select", {}, el("option", { value: "" }, "default mode"), el("option", { value: "in_context" }, "in-context"), el("option", { value: "retrieval" }, "retrieval"));
-  const progress = el("div", { class: "muted hidden" }, el("span", { class: "spinner" }), " Running…");
-  const err = el("div", {});
-  const reviewHost = el("div", {});
-  const run = el("button", { class: "btn primary", onclick: async () => {
-    if (!file.files[0]) return;
-    err.replaceChildren(); progress.classList.remove("hidden");
-    const fd = new FormData(); fd.append("questionnaire", file.files[0]);
-    if (tags.value.trim()) fd.append("tags", tags.value.trim());
-    if (mode.value) fd.append("mode", mode.value);
-    try {
-      const { run_id } = await api(`/api/workspaces/${wid}/runs`, { method: "POST", body: fd });
-      poll(run_id, reviewHost, progress, err);
-    } catch (e) { progress.classList.add("hidden"); err.replaceChildren(el("div", { class: "error" }, e.message)); }
-  } }, "Run");
-  card.append(el("div", { class: "form" }, el("label", { class: "field" }, "Questionnaire file", file),
-    el("div", { class: "row" }, el("label", { class: "field" }, "Tags", tags), el("label", { class: "field" }, "Mode", mode)),
-    el("div", { class: "btn-row" }, run), progress, err));
-
-  // Live batch dashboard launcher.
-  const batchFiles = el("input", { type: "file", multiple: "multiple", accept: ".xlsx,.xlsm,.docx,.pdf" });
-  const dashHost = el("div", {});
-  const batchBtn = el("button", { class: "btn", onclick: async () => {
-    if (!batchFiles.files.length) return;
-    const fd = new FormData();
-    for (const f of batchFiles.files) fd.append("files", f);
-    try {
-      const r = await api(`/api/workspaces/${wid}/batch-stream`, { method: "POST", body: fd });
-      renderDashboard(dashHost, r.batch_id, r.n_files);
-    } catch (e) { dashHost.replaceChildren(el("div", { class: "error" }, e.message)); }
-  } }, "Run batch (live dashboard)");
-  const batchCard = el("div", { class: "card" }, el("h2", {}, "Batch — live command center"),
-    el("p", { class: "muted" }, "Process many files at once and watch the grounded pipeline in real time."),
-    el("label", { class: "field" }, "Questionnaire files", batchFiles),
-    el("div", { class: "btn-row" }, batchBtn));
-
-  view.append(card, reviewHost, batchCard, dashHost);
-}
-
-// --- live processing dashboard (Phase 8 D) ---
-function renderDashboard(host, batchId, nFiles) {
-  const counts = { files_done: 0, tier1: 0, generated: 0, flagged: 0, errors: 0 };
-  const stat = (label, id) => el("div", { class: "dash-stat" }, el("b", { id: "ds-" + id }, "0"),
-    el("span", { class: "dash-label" }, label));
-  const tracker = el("div", { class: "dash-tracker" },
-    el("div", { class: "dash-stat" }, el("b", { id: "ds-files" }, "0/" + nFiles), el("span", { class: "dash-label" }, "files")),
-    stat("matched (Tier-1)", "tier1"), stat("generated", "generated"),
-    stat("flagged", "flagged"), stat("errors", "errors"));
-  const consoleBox = el("div", { class: "dash-console" });
-  const bar = el("div", { class: "dash-bar" }, el("div", { class: "dash-bar-fill", id: "dash-fill" }));
-  const done = el("div", { class: "dash-done" });
-  host.replaceChildren(el("div", { class: "dash card" },
-    el("h2", {}, "Processing"), tracker, bar, el("h4", { class: "dash-h" }, "AI thinking"), consoleBox, done));
-
-  const set = (id, v) => { const e = $("ds-" + id); if (e) e.textContent = v; };
-  const line = (cls, text) => {
-    const t = new Date().toLocaleTimeString();
-    consoleBox.append(el("div", { class: "cline " + (cls || "") }, el("span", { class: "cts" }, t + " "), text));
-    consoleBox.scrollTop = consoleBox.scrollHeight;
-  };
-
-  const es = new EventSource(`/api/runs/${batchId}/stream`);
-  es.onmessage = (ev) => {
-    const e = JSON.parse(ev.data);
-    switch (e.type) {
-      case "file_started": line("", `▶ ${e.file} — started`); break;
-      case "parsed": line("", `parsed ${e.questions} question(s)`); break;
-      case "retrieved": line("dim", `  retrieved k=${e.k} top=${e.top_score ?? "—"}`); break;
-      case "tier1_reuse": counts.tier1++; set("tier1", counts.tier1); line("ok", `  ✓ reused approved answer (Tier-1)`); break;
-      case "generated": counts.generated++; set("generated", counts.generated); break;
-      case "faithfulness": line(e.passed ? "ok" : "bad", `  faithfulness ${e.passed ? "PASS" : "FAIL"}`); break;
-      case "flagged": counts.flagged++; set("flagged", counts.flagged); line("warn", `  ⚠ flagged: ${(e.reason||"").replace(/_/g," ")}`); break;
-      case "question_done": line(e.confidence === "high" ? "ok" : e.confidence === "low" ? "bad" : "warn", `  · ${e.status} (${e.confidence})`); break;
-      case "file_done":
-        counts.files_done++; set("files", counts.files_done + "/" + nFiles);
-        const fill = $("dash-fill"); if (fill) fill.style.width = Math.round(100 * counts.files_done / nFiles) + "%";
-        line("ok", `■ ${e.file} done — ${e.answered} answered, ${e.flagged} flagged`); break;
-      case "error": counts.errors++; set("errors", counts.errors); line("bad", `✗ error: ${e.error}`); break;
-      case "_end":
-        es.close();
-        api(`/api/runs/${batchId}/events`).then((snap) => {
-          done.replaceChildren(el("div", { class: "ok-msg" }, "Batch complete."),
-            snap.zip ? el("a", { class: "btn primary", href: `/api/runs/${batchId}/download/${snap.zip}`, download: snap.zip }, "Download filled originals (ZIP)") : el("span"));
-        });
-        break;
-    }
-  };
-  es.onerror = () => { line("bad", "stream closed"); es.close(); };
-}
-
-async function poll(runId, host, progress, err) {
-  const d = await api(`/api/runs/${runId}`);
-  if (d.status === "done") { progress.classList.add("hidden"); renderReview(host, runId, d); }
-  else if (d.status === "error") { progress.classList.add("hidden"); err.replaceChildren(el("div", { class: "error" }, "Run failed: " + (d.error || "unknown"))); }
-  else setTimeout(() => poll(runId, host, progress, err), 500);
-}
-
-const CONF = { high: "high", medium: "medium", low: "low" };
-function citations(cites) {
-  if (!cites || !cites.length) return null;
-  const d = el("details", {}, el("summary", {}, `${cites.length} citation(s)`));
-  for (const c of cites) d.append(el("div", { class: "cite" }, el("span", { class: "src" }, c.source), " ",
-    (c.faithful === true ? "✓ " : c.faithful === false ? "✗ " : ""), c.snippet));
-  return d;
-}
-
-function renderReview(host, runId, d) {
-  const s = d.summary;
-  const reasons = Object.entries(s.flagged_by_reason || {}).map(([k, v]) => `${v} ${k.replace(/_/g, " ")}`).join(", ");
-  const summary = el("div", { class: "summary" },
-    el("div", { class: "stat" }, el("b", {}, String(s.total)), " questions"), el("span", { class: "sep" }, "·"),
-    el("div", { class: "stat" }, el("b", {}, String(s.auto_answered_high)), " auto (high)"), el("span", { class: "sep" }, "·"),
-    el("div", { class: "stat" }, el("b", {}, String(s.flagged)), " need review" + (reasons ? ` (${reasons})` : "")));
-  const items = el("div", {});
-  for (const it of d.results) items.append(reviewItem(runId, it));
-  const exportRes = el("div", { class: "export-result" });
-  const exportBtn = el("button", { class: "btn primary", onclick: async () => {
-    exportRes.textContent = "Exporting…";
-    try { const res = await api(`/api/runs/${runId}/export`, { method: "POST" });
-      exportRes.replaceChildren(...Object.values(res.artifacts).map((n) => el("a", { href: `/api/runs/${runId}/download/${n}`, download: n }, n)));
-      if (res.writeback?.fallback) exportRes.append(el("div", { class: "fallback" }, "Write-back fell back to the separate file (workbook had images/charts)."));
-    } catch (e) { exportRes.textContent = "Export failed: " + e.message; }
-  } }, "Export draft");
-  host.replaceChildren(summary, items, el("div", { class: "card" }, exportBtn, exportRes),
-    el("p", { class: "muted" }, "Output is a draft. Nothing is submitted."));
-}
-
-function reviewItem(runId, item) {
-  const card = el("div", { class: "item" });
-  const badges = el("div", { class: "badges" }, el("span", { class: "chip " + (CONF[item.confidence] || "low") }, item.confidence));
-  if (item.review_reason && item.review_reason !== "none") badges.append(el("span", { class: "chip reason" }, item.review_reason.replace(/_/g, " ")));
-  card.append(el("div", { class: "item-head" }, el("div", { class: "q-text" }, item.question_text), badges));
-  const isAttachment = item.answer_type === "attachment";
-  let textarea = null, chosenInterp = null, chosenAtt = null;
-  if (!isAttachment) { textarea = el("textarea", {}, item.answer || ""); card.append(el("div", { class: "answer-box" }, textarea)); }
-
-  if (item.review_reason === "ambiguous" && (item.candidates || []).length) {
-    const p = el("div", { class: "panel" }, el("h4", {}, "Interpretations — pick one"));
-    item.candidates.forEach((c, i) => {
-      const radio = el("input", { type: "radio", name: "i-" + item.question_id, id: `i-${item.question_id}-${i}` });
-      radio.addEventListener("change", () => { chosenInterp = c.interpretation; if (textarea) textarea.value = c.answer || ""; });
-      p.append(el("div", { class: "option" }, radio, el("label", { for: `i-${item.question_id}-${i}` },
-        el("div", {}, el("b", {}, c.interpretation)), el("div", { class: "muted" }, c.answer || "(no supported answer)"), citations(c.citations))));
-    });
-    card.append(p);
-  }
-  if (isAttachment || item.review_reason === "attachment_unresolved") {
-    const cands = (item.attachment_candidates || []).length ? item.attachment_candidates : (item.attachment_path ? [item.attachment_path] : []);
-    if (cands.length) {
-      const p = el("div", { class: "panel" }, el("h4", {}, "Attachment — confirm a file"));
-      cands.forEach((fn, i) => { const radio = el("input", { type: "radio", name: "a-" + item.question_id, id: `a-${item.question_id}-${i}` });
-        if (i === 0 && item.attachment_path) { radio.checked = true; chosenAtt = fn; }
-        radio.addEventListener("change", () => { chosenAtt = fn; });
-        p.append(el("div", { class: "option" }, radio, el("label", { for: `a-${item.question_id}-${i}` }, fn))); });
-      card.append(p);
-    }
-  }
-  if (item.review_reason === "conflict" && item.conflict_with)
-    card.append(el("div", { class: "panel warn" }, el("h4", {}, "Conflict — reconcile"),
-      el("div", { class: "conflict-grid" }, el("div", { class: "col" }, el("h4", {}, "This answer"), item.answer || "—"),
-        el("div", { class: "col" }, el("h4", {}, "Conflicts with"), item.conflict_with))));
-  if ((item.review_reason === "unsupported" || item.review_reason === "faithfulness_fail" || item.review_reason === "library_candidate") && item.missing_info)
-    card.append(el("div", { class: "panel warn" }, el("h4", {}, "Why flagged"), item.missing_info));
-
-  card.append(citations(item.citations) || el("span"));
-  const status = el("span", { class: "muted" });
-  const acceptBtn = el("button", { class: "btn primary" }, item.review_reason === "ambiguous" ? "Accept selected" : "Accept");
-  acceptBtn.addEventListener("click", async () => {
-    const body = { approved_by: "web" };
-    if (chosenAtt) body.attachment = chosenAtt;
-    else if (chosenInterp) { body.interpretation = chosenInterp; body.answer = textarea ? textarea.value : null; }
-    else if (textarea) body.answer = textarea.value;
-    acceptBtn.disabled = true;
-    try { const res = await api(`/api/runs/${runId}/items/${item.question_id}/accept`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      card.classList.add("accepted");
-      badges.replaceChildren(el("span", { class: "chip trained" }, res.trained ? "✓ added to library" : "✓ answered"));
-    } catch (e) { status.textContent = "Error: " + e.message; acceptBtn.disabled = false; }
-  });
-  card.append(el("div", { class: "actions" }, acceptBtn,
-    el("button", { class: "btn ghost", onclick: () => { card.style.opacity = .55; } }, "Leave for review"), status));
-  return card;
-}
-
-// ---- settings view ----
-async function settingsView(view, wid) {
-  view.append(el("div", { class: "warn-banner" }, "This UI has no authentication and holds your full security posture. Keep it on 127.0.0.1 — don't expose it to a network without putting auth in front."));
-
-  // Completion / analytics (Phase 10 D) — local read only.
-  try {
-    const s = await api(`/api/workspaces/${wid}/stats`);
-    const stat = (label, val) => el("div", { class: "dash-stat" }, el("b", {}, String(val)), el("span", { class: "dash-label" }, label));
-    const reasons = Object.entries(s.flagged_by_reason || {}).map(([k, v]) => `${v} ${k.replace(/_/g, " ")}`).join(", ");
-    view.append(el("div", { class: "card" }, el("h2", {}, "Analytics"),
-      el("div", { class: "dash-tracker" },
-        stat("runs", s.n_runs), stat("questions", s.total_questions),
-        stat("completion", Math.round(s.completion_rate * 100) + "%"),
-        stat("auto (high+med)", Math.round(s.auto_answer_rate_high_med * 100) + "%"),
-        stat("flagged", s.flagged)),
-      reasons ? el("p", { class: "muted" }, "Flagged: " + reasons) : el("span"),
-      el("p", { class: "muted" }, `~${s.time_saved_minutes} min saved — ${s.time_saved_note}`)));
-  } catch (_) {}
-
-  // Model status
-  const modelCard = el("div", { class: "card" }, el("h2", {}, "Model"),
-    el("div", { class: "provider" }, `${S.status.provider} · ${S.status.model}`),
-    el("p", { class: "muted" }, "Provider and key live in .env on the server — never in this page or per-workspace. Local models need no key."));
-  const dres = el("div", {});
-  modelCard.append(el("div", { class: "btn-row" }, el("button", { class: "btn", onclick: async () => { dres.textContent = "Testing…"; await refreshDoctor(); dres.replaceChildren(S.doctor?.ok ? el("span", { class: "ok-msg" }, "✓ reachable") : el("div", { class: "error" }, "✗ not reachable — check .env")); } }, "Test connection")), dres);
-  view.append(modelCard);
-
-  // KB
-  view.append(el("div", { class: "card" }, el("h2", {}, "Knowledge base documents"),
-    el("p", { class: "muted" }, "Cited when answering. Tag docs to scope which answer which questionnaire."), assetManager(wid, "kb")));
-  // Approved answers
-  view.append(el("div", { class: "card" }, el("h2", {}, "Approved answers"),
-    el("p", { class: "muted" }, "Used first and verbatim. Grown automatically each time you accept a reviewed answer."), qaManager(wid)));
-  // Evidence
-  view.append(el("div", { class: "card" }, el("h2", {}, "Evidence vault"),
-    el("p", { class: "muted" }, "Attached to “please attach…” questions; not used as answer text."), assetManager(wid, "evidence")));
-  // Engine settings
-  const ws = await api(`/api/workspaces/${wid}`);
-  const set = ws.settings || {};
-  const modeSel = el("select", {}, ...["in_context", "retrieval"].map((m) => el("option", { value: m, ...(set.kb_mode === m ? { selected: "selected" } : {}) }, m)));
-  const faith = el("input", { type: "checkbox", ...(set.verify_faithfulness !== false ? { checked: "checked" } : {}) });
-  const conflict = el("input", { type: "checkbox", ...(set.detect_conflicts !== false ? { checked: "checked" } : {}) });
-  const tagsDefault = el("input", { value: (set.tags || []).join(", "), placeholder: "default tag scope" });
-  const saveRes = el("div", {});
-  const save = el("button", { class: "btn primary", onclick: async () => {
-    try { await jpatch(`/api/workspaces/${wid}/settings`, { kb_mode: modeSel.value, verify_faithfulness: faith.checked, detect_conflicts: conflict.checked, tags: tagsDefault.value.split(",").map(s => s.trim()).filter(Boolean) });
-      saveRes.replaceChildren(el("span", { class: "ok-msg" }, "✓ saved")); }
-    catch (e) { saveRes.replaceChildren(el("div", { class: "error" }, e.message)); }
-  } }, "Save settings");
-  view.append(el("div", { class: "card" }, el("h2", {}, "Engine settings"),
-    el("label", { class: "field" }, "Retrieval mode (in-context dumps the KB; retrieval ranks it — better for large KBs)", modeSel),
-    el("label", { class: "field" }, el("span", {}, faith, " Verify faithfulness (check each claim is entailed by its citation)")),
-    el("label", { class: "field" }, el("span", {}, conflict, " Detect cross-source conflicts (flag contradictory answers)")),
-    el("label", { class: "field" }, "Default tag scope", tagsDefault),
-    el("div", { class: "btn-row" }, save), saveRes));
-
-  // Danger zone
-  view.append(el("div", { class: "card" }, el("h2", {}, "Danger zone"),
-    el("div", { class: "btn-row" }, el("button", { class: "btn danger", onclick: async () => {
-      if (!confirm(`Delete workspace "${S.current}" and all its files? This cannot be undone.`)) return;
-      await api(`/api/workspaces/${wid}`, { method: "DELETE" }); S.current = null; await loadWorkspaces();
-      if (S.workspaces.length) { S.current = S.workspaces[0].id; showHome(); } else showWizard();
-    } }, "Delete this workspace"))));
 }
 
 boot();

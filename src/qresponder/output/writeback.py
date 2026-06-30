@@ -181,6 +181,16 @@ def _writeback_xlsx(result: QuestionnaireResult, original_path: Path, out_path: 
         # value, so dropdowns/validations survive — Part F).
         value = _coerce_to_validation(ws, coord, value)
         cell.value = value  # set value only; never touch the (shared) style/validation
+        # Red-italic the marker in unresolved cells (Phase 11 F). Only ever applied
+        # to a cell we just filled with a marker (it was blank) — ANSWERED cells and
+        # validations/media are untouched. Best-effort: never break write-back.
+        if review_markers and r.status == Status.NEEDS_REVIEW:
+            try:
+                from openpyxl.styles import Font
+
+                cell.font = Font(color="FFC0392B", italic=True)
+            except Exception:  # noqa: BLE001
+                pass
         written += 1
 
     wb.save(out_path)

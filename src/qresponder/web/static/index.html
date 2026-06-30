@@ -8,17 +8,26 @@
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">QRESPONDER<span class="brand-sub">security questionnaire automation</span></div>
-    <div class="topbar-right">
+  <header class="topnav">
+    <div class="nav-left">
+      <div class="logo" aria-hidden="true"></div>
+      <span class="wordmark">QRESPONDER</span>
+      <nav id="nav" class="nav-items hidden">
+        <a class="nav-item" data-page="upload">Upload</a>
+        <a class="nav-item" data-page="kb">Knowledge Base</a>
+        <a class="nav-item" data-page="settings">Settings</a>
+      </nav>
+    </div>
+    <div class="nav-right">
       <div id="ws-switcher" class="ws-switcher hidden"></div>
-      <div id="provider" class="provider" title="Active model (server-side; your API key never reaches this page)">—</div>
-      <span id="doctor-dot" class="doctor-dot" title="connection status"></span>
+      <div id="model-status" class="model-status" title="Active model — server-side; your API key never reaches this page">
+        <span class="ms-dot"></span><span class="ms-text">—</span>
+      </div>
     </div>
   </header>
   <main id="app"><div class="loading"><span class="spinner"></span> Loading…</div></main>
   <footer class="appfoot">
-    Local-first · binds 127.0.0.1 · no telemetry · your API key stays in <code>.env</code>, never in this page.
+    Local-first · binds 127.0.0.1 · no login · no telemetry · your API key stays in <code>.env</code>, never in this page.
   </footer>
   <script src="/app.js"></script>
 </body>

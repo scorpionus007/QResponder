@@ -17,6 +17,9 @@ from ..models import QuestionnaireResult, Status
 
 _HEADERS = ["#", "Question", "Answer", "Citations", "Confidence", "Status", "Reason", "Tier"]
 _REVIEW_FILL = PatternFill(start_color="FFFFF2CC", end_color="FFFFF2CC", fill_type="solid")
+# Unresolved answer cells render the marker in red italic (Phase 11 F) — visible at
+# a glance, while ANSWERED cells stay untouched and the original is never overwritten.
+_REVIEW_FONT = Font(color="FFC0392B", italic=True)
 
 # Visible placeholder marker for NEEDS_REVIEW items (Phase 7 C).
 DEFAULT_REVIEW_MARKER = "⚠ NEEDS REVIEW: {reason}"
@@ -71,6 +74,8 @@ def write_xlsx(result: QuestionnaireResult, path: str | Path, review_markers: bo
         if r.status == Status.NEEDS_REVIEW:
             for col in range(1, len(_HEADERS) + 1):
                 ws.cell(row=row, column=col).fill = _REVIEW_FILL
+            if review_markers:
+                ws.cell(row=row, column=3).font = _REVIEW_FONT  # red italic marker
 
     # Reasonable column widths for readability.
     widths = {1: 4, 2: 50, 3: 60, 4: 50, 5: 11, 6: 14, 7: 16, 8: 6}
