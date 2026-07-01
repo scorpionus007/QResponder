@@ -129,6 +129,7 @@ def create_app(config: Config | None = None, model_fetch=None) -> FastAPI:
     app.state.oauth_tokens = oauth_tokens
     oauth_pending: dict[str, dict] = {}
     app.state.oauth_fetch = None  # injectable token-exchange HTTP fetcher (tests)
+    app.state.oauth_cloud_fetch = None  # injectable Atlassian cloud-id fetcher (tests)
 
     # ---- run machinery (shared by legacy + workspace runs) -----------------
     def _emit(job: _Job, event: dict):
@@ -378,6 +379,17 @@ def create_app(config: Config | None = None, model_fetch=None) -> FastAPI:
                                   flow["verifier"], fetch=app.state.oauth_fetch)
         except Exception as exc:  # noqa: BLE001
             return _page(f"Sign-in failed: {exc}", False)
+        # Confluence (3LO) needs the Atlassian Cloud id to address the API — resolve
+        # it best-effort; a failure here doesn't block storing the token.
+        if provider == "confluence":
+            try:
+                from ..connectors.oauth import atlassian_cloud_id
+
+                cid = atlassian_cloud_id(token["access_token"], fetch=app.state.oauth_cloud_fetch)
+                if cid:
+                    token["cloud_id"] = cid
+            except Exception:  # noqa: BLE001
+                pass
         oauth_tokens.save(provider, token)  # server-side only
         return _page("Connected ✓", True)
 
@@ -449,9 +461,11 @@ def create_app(config: Config | None = None, model_fetch=None) -> FastAPI:
                 from ..connectors.confluence import ConfluenceConnector
 
                 # Prefer an OAuth token (from the browser sign-in) over a static .env token.
+                _cf = oauth_tokens.load("confluence") or {}
                 conn = ConfluenceConnector(str(body.get("space", "")),
-                                           token=oauth_tokens.access_token("confluence") or config.confluence_token,
-                                           base_url=config.confluence_base_url, email=config.confluence_email, tags=tags)
+                                           token=_cf.get("access_token") or config.confluence_token,
+                                           base_url=config.confluence_base_url, email=config.confluence_email,
+                                           cloud_id=_cf.get("cloud_id"), tags=tags)
             elif kind == "notion":
                 from ..connectors.notion import NotionConnector
 

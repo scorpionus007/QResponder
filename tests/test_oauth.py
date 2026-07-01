@@ -134,3 +134,28 @@ def test_connect_uses_stored_oauth_token(tmp_path, monkeypatch):
     r = client.post(f"/api/workspaces/{wid}/connect", json={"type": "notion", "database": "db1", "tags": ["soc2"]})
     assert r.status_code == 200 and len(r.json()["accepted"]) == 1
     assert captured["token"] == "stored-tok"  # the OAuth token was used, not a .env token
+
+
+def test_confluence_oauth_resolves_cloud_id_and_connect_uses_it(tmp_path, monkeypatch):
+    """Confluence 3LO: the callback resolves the Atlassian cloud id and stores it;
+    connect() then passes token + cloud_id to the connector (Bearer/Cloud path)."""
+    app, client = _client(tmp_path, confluence_client_id="cid", confluence_client_secret="sec")
+    app.state.oauth_fetch = lambda url, data, headers: {"access_token": "cf-oauth-tok"}
+    app.state.oauth_cloud_fetch = lambda url, headers: [{"id": "cloud-123", "name": "acme"}]
+    wid = client.post("/api/workspaces", json={"name": "W"}).json()["id"]
+    start = client.get("/api/oauth/confluence/start").json()
+    state = parse_qs(urlparse(start["authorize_url"]).query)["state"][0]
+    client.get(f"/api/oauth/callback?code=abc&state={state}")
+
+    import qresponder.connectors.confluence as cmod
+    captured = {}
+    orig_init = cmod.ConfluenceConnector.__init__
+    def spy_init(self, space_key, token=None, cloud_id=None, **kw):
+        captured.update(token=token, cloud_id=cloud_id)
+        orig_init(self, space_key, token=token, cloud_id=cloud_id,
+                  client=lambda s: [{"name": "Sec Policy", "text": "AES-256 at rest."}], **kw)
+    monkeypatch.setattr(cmod.ConfluenceConnector, "__init__", spy_init)
+
+    r = client.post(f"/api/workspaces/{wid}/connect", json={"type": "confluence", "space": "ENG"})
+    assert r.status_code == 200 and len(r.json()["accepted"]) == 1
+    assert captured["token"] == "cf-oauth-tok" and captured["cloud_id"] == "cloud-123"

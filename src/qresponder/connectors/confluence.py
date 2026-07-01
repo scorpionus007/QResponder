@@ -16,15 +16,18 @@ class ConfluenceConnector(TokenConnector):
     env_hint = "set confluence_token (+ confluence_base_url, confluence_email) in .env"
     default_ext = ".html"  # Confluence storage format is HTML; the KB loader reads it
 
-    def __init__(self, space_key: str, token=None, base_url=None, email=None, tags=None,
-                 client=None, timeout: int = 15, max_items: int = 200):
+    def __init__(self, space_key: str, token=None, base_url=None, email=None, cloud_id=None,
+                 tags=None, client=None, timeout: int = 15, max_items: int = 200):
         super().__init__(space_key, token=token, base_url=base_url, tags=tags,
                          client=client, timeout=timeout, max_items=max_items)
         self.email = email
+        self.cloud_id = cloud_id  # set → use the OAuth (3LO) Bearer + Cloud API path
 
     def _make_client(self):  # pragma: no cover - real network/SDK path
+        if self.cloud_id:
+            return self._oauth_client()
         if not self.base_url:
-            raise ConnectorError("Confluence: confluence_base_url is required.")
+            raise ConnectorError("Confluence: sign in with Confluence, or set confluence_base_url in .env.")
         try:
             from atlassian import Confluence  # type: ignore
         except ImportError as exc:
@@ -44,6 +47,35 @@ class ConfluenceConnector(TokenConnector):
                     docs.append({"name": p.get("title"), "text": (p.get("body", {}).get("storage", {}) or {}).get("value", ""),
                                  "url": f"{self.base_url}/pages/{p.get('id')}"})
                 if len(batch) < limit:
+                    break
+                start += limit
+            return docs
+
+        return _client
+
+    def _oauth_client(self):  # pragma: no cover - real network path
+        """OAuth 2.0 (3LO): Bearer token against the Atlassian Cloud REST API."""
+        import json
+        import urllib.parse
+        import urllib.request
+
+        base = f"https://api.atlassian.com/ex/confluence/{self.cloud_id}/rest/api"
+        headers = {"Authorization": f"Bearer {self.token}", "Accept": "application/json"}
+
+        def _client(space_key: str):
+            docs, start, limit = [], 0, 50
+            while len(docs) < self.max_items:
+                qs = urllib.parse.urlencode({"spaceKey": space_key, "expand": "body.storage",
+                                             "limit": limit, "start": start})
+                req = urllib.request.Request(f"{base}/content?{qs}", headers=headers)
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310
+                    data = json.loads(resp.read().decode("utf-8"))
+                results = data.get("results", [])
+                for p in results:
+                    docs.append({"name": p.get("title"),
+                                 "text": (p.get("body", {}).get("storage", {}) or {}).get("value", ""),
+                                 "url": (p.get("_links", {}) or {}).get("webui", "")})
+                if len(results) < limit:
                     break
                 start += limit
             return docs

@@ -127,6 +127,23 @@ def exchange_code(provider: str, code: str, client_id: str, client_secret: str,
     return resp
 
 
+def atlassian_cloud_id(access_token: str, fetch=None) -> str | None:  # pragma: no cover - real network
+    """Resolve the Atlassian Cloud id for an OAuth token (needed to address the
+    Confluence Cloud API at api.atlassian.com/ex/confluence/{cloudId})."""
+    def _default(url, headers):
+        import urllib.request
+
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=20) as resp:  # noqa: S310
+            return json.loads(resp.read().decode("utf-8"))
+
+    data = (fetch or _default)("https://api.atlassian.com/oauth/token/accessible-resources",
+                              {"Authorization": f"Bearer {access_token}", "Accept": "application/json"})
+    if isinstance(data, list) and data:
+        return data[0].get("id")
+    return None
+
+
 class TokenStore:
     """Persists OAuth tokens server-side, one file per provider. Never returned to
     the browser. Account-level (this is a local, single-user tool)."""
