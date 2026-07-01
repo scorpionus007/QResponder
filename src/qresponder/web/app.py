@@ -696,8 +696,11 @@ def create_app(config: Config | None = None, model_fetch=None) -> FastAPI:
         return {"run_id": run_id, "workspace": wid}
 
     # ---- Ask mode (Phase 10 A): one question, the same grounded path -------
-    @app.post("/api/workspaces/{wid}/ask")
-    def ask(wid: str, body: dict = Body(...)):
+    def _run_single(wid: str, body: dict, guidance: str | None = None):
+        """Shared single-question path for Ask + Regenerate — always the same
+        run_ask/orchestrate pipeline. `guidance` is a per-question style note that
+        overrides the preset (style only, subordinate to grounding); it cannot
+        force an answer — snippet_supported + faithfulness + abstain still apply."""
         from ..core.pipeline import run_ask
         from ..core.presets import resolve as resolve_preset
 
@@ -711,14 +714,28 @@ def create_app(config: Config | None = None, model_fetch=None) -> FastAPI:
         provider_obj = _build_provider(body.get("provider"), body.get("model") or ws.load_settings().get("model"))
         settings = ws.load_settings()
         preset_name = body.get("preset") or settings.get("preset")
-        style = resolve_preset(preset_name, ws.path)
+        # Guidance wins over the preset but is style only (goes to prompts.style_block).
+        guidance = (guidance or "").strip() or None
+        style = guidance or resolve_preset(preset_name, ws.path)
         scope = parse_tags(body.get("tags")) if body.get("tags") else ws.default_tags()
         r = run_ask(question, str(ws.kb_dir), str(ws.qa_path), cfg, scope_tags=scope,
                     provider=provider_obj, evidence_dir=str(ws.evidence_dir),
-                    preset=preset_name if style else None, style=style,
+                    preset=(None if guidance else (preset_name if style else None)), style=style,
                     include_sources=parse_tags(body.get("include_sources")),
                     exclude_sources=parse_tags(body.get("exclude_sources")))
         return r.model_dump()
+
+    @app.post("/api/workspaces/{wid}/ask")
+    def ask(wid: str, body: dict = Body(...)):
+        return _run_single(wid, body)
+
+    @app.post("/api/workspaces/{wid}/regenerate")
+    def regenerate(wid: str, body: dict = Body(...)):
+        """Re-run one question through the SAME grounded path, optionally with a
+        style-only guidance note. Reuses run_ask — no new answering logic; still
+        abstains (NEEDS_REVIEW) when unsupported. Accepting the result trains the
+        library via the existing POST .../qa (approve_one)."""
+        return _run_single(wid, body, guidance=body.get("guidance"))
 
     # ---- workspace batch (Part D) -----------------------------------------
     @app.post("/api/workspaces/{wid}/batch")

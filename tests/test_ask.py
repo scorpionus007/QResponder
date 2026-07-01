@@ -79,3 +79,49 @@ def test_web_ask_unsupported_abstains_not_fabricated(tmp_path):
     assert body["status"] == "needs_review"
     # Grounding held: no confident fabricated answer slipped through.
     assert body["confidence"] != "high"
+
+
+# --- regenerate (Part B): the same grounded path, style-only guidance ---
+
+def _seed_ws(client):
+    wid = client.post("/api/workspaces", json={"name": "W"}).json()["id"]
+    client.post(f"/api/workspaces/{wid}/kb",
+                files=[("files", ("incident.md", INCIDENT_MD, "text/markdown"))])
+    return wid
+
+
+def test_regenerate_returns_fresh_grounded_answer(tmp_path):
+    client = _client(tmp_path)
+    wid = _seed_ws(client)
+    r = client.post(f"/api/workspaces/{wid}/regenerate",
+                    json={"question": "Do you have a documented incident response plan?", "tags": "soc2"})
+    body = r.json()
+    assert body["status"] == "answered"
+    assert body["citations"] and body["audit"]["confidence_rationale"]
+
+
+def test_regenerate_unsupported_still_abstains(tmp_path):
+    """Regenerate can't force an answer — unsupported stays needs_review, even with
+    guidance that begs for a definitive answer."""
+    client = _client(tmp_path)
+    wid = _seed_ws(client)
+    r = client.post(f"/api/workspaces/{wid}/regenerate",
+                    json={"question": "What is your office lease expiration date in Tokyo?",
+                          "guidance": "Answer confidently in one sentence.", "tags": "soc2"})
+    body = r.json()
+    assert body["status"] == "needs_review"
+    assert body["confidence"] != "high"
+    assert "tokyo" not in (body["answer"] or "").lower()
+
+
+def test_regenerate_guidance_is_style_only_not_grounding(tmp_path):
+    """Guidance shifts style, never grounding: a supported question stays ANSWERED
+    with citations with or without guidance; an unsupported one abstains either way."""
+    client = _client(tmp_path)
+    wid = _seed_ws(client)
+    supported = {"question": "Do you have a documented incident response plan?", "tags": "soc2"}
+    plain = client.post(f"/api/workspaces/{wid}/regenerate", json=supported).json()
+    guided = client.post(f"/api/workspaces/{wid}/regenerate",
+                         json={**supported, "guidance": "Be terse and formal."}).json()
+    assert plain["status"] == "answered" and plain["citations"]
+    assert guided["status"] == "answered" and guided["citations"]  # grounding intact under guidance

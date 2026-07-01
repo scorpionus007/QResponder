@@ -373,27 +373,32 @@ function askPage(view, wid) {
   const progress = el("div", { class: "muted hidden" }, el("span", { class: "spinner" }), " Thinking…");
   const err = el("div", {});
   const out = el("div", {});
-  const askBtn = el("button", { class: "btn primary", onclick: async () => {
+
+  const body = () => ({
+    question: question.value,
+    provider: provSel.value || null, model: modelSel.value || null,
+    tags: csv(tags.value), include_sources: csv(incl.value), exclude_sources: csv(excl.value),
+  });
+  async function run(path, extra, busyBtn) {
     if (!question.value.trim()) return;
-    err.replaceChildren(); out.replaceChildren(); progress.classList.remove("hidden"); askBtn.disabled = true;
+    err.replaceChildren(); progress.classList.remove("hidden"); if (busyBtn) busyBtn.disabled = true;
     try {
-      const r = await jpost(`/api/workspaces/${wid}/ask`, {
-        question: question.value,
-        provider: provSel.value || null, model: modelSel.value || null,
-        tags: csv(tags.value), include_sources: csv(incl.value), exclude_sources: csv(excl.value),
-      });
-      out.replaceChildren(groundedResult(r));
+      const r = await jpost(`/api/workspaces/${wid}/${path}`, { ...body(), ...(extra || {}) });
+      out.replaceChildren(groundedResult(r, { wid, question: question.value, rerun: run }));
     } catch (e) { err.replaceChildren(el("div", { class: "error" }, e.message)); }
-    finally { progress.classList.add("hidden"); askBtn.disabled = false; }
-  } }, "Ask");
+    finally { progress.classList.add("hidden"); if (busyBtn) busyBtn.disabled = false; }
+  }
+  const askBtn = el("button", { class: "btn primary" }, "Ask");
+  askBtn.addEventListener("click", () => run("ask", null, askBtn));
 
   controls.append(el("div", { class: "btn-row" }, askBtn, progress), err);
   view.append(controls, out);
 }
 
 // Shared grounded-result renderer — answer NEVER shown without its grounding
-// (confidence + citations, or the honest abstention).
-function groundedResult(r) {
+// (confidence + citations, or the honest abstention). opts (optional) enables the
+// inline Regenerate (style-only guidance) + Save-to-library actions.
+function groundedResult(r, opts) {
   const flagged = r.status === "needs_review" || (r.review_reason && r.review_reason !== "none");
   const card = el("div", { class: "item" + (flagged ? "" : " accepted") });
   const badges = el("div", { class: "badges" },
@@ -418,6 +423,27 @@ function groundedResult(r) {
   else if (!flagged) card.append(el("p", { class: "muted" }, "No citations attached."));
   const audit = auditBlock(r.audit);
   if (audit) card.append(audit);
+
+  // Inline Regenerate (style-only guidance) + Save-to-library — reuses the same
+  // grounded path; regenerate can't force an answer, and Save trains the library.
+  if (opts && opts.rerun) {
+    const guidance = el("input", { placeholder: "Guidance for regenerate — style only (e.g. “shorter, first person”). Never changes what's grounded.", "aria-label": "Regenerate guidance (style only)" });
+    const regen = el("button", { class: "btn" }, icon("copy"), "Regenerate");
+    regen.addEventListener("click", () => opts.rerun("regenerate", { guidance: guidance.value }, regen));
+    const actions = el("div", { class: "actions" }, regen);
+    if (!flagged && r.answer) {
+      const save = el("button", { class: "btn primary" }, icon("check"), "Save to library");
+      save.addEventListener("click", async () => {
+        save.disabled = true;
+        try {
+          await jpost(`/api/workspaces/${opts.wid}/qa`, { question: opts.question || r.question_text, answer: r.answer, approved_by: "ask" });
+          toast("Saved to the answer library.", "good");
+        } catch (e) { toast(e.message, "bad"); save.disabled = false; }
+      });
+      actions.append(save);
+    }
+    card.append(el("div", { class: "rail" }, el("span", { class: "rail-src" }, "refine"), guidance), actions);
+  }
   return card;
 }
 
