@@ -167,12 +167,15 @@ def test_confluence_list_spaces_offline():
     calls = []
     def fake(cloud_id, token, path):
         calls.append(path)
-        if "start=0" in path:
-            return {"results": [{"key": "ENG", "name": "Engineering"}, {"key": "SEC", "name": "Security"}]}
-        return {"results": []}
+        # v2 cursor pagination: first page has a next link, second is the last.
+        if "cursor" not in path:
+            return {"results": [{"key": "ENG", "name": "Engineering", "id": "1"}],
+                    "_links": {"next": "/wiki/api/v2/spaces?cursor=abc"}}
+        return {"results": [{"key": "SEC", "name": "Security", "id": "2"}]}
     spaces = list_spaces("tok", "cloud-1", fetch=fake)
-    assert {s["key"] for s in spaces} == {"ENG", "SEC"}
+    assert {s["key"] for s in spaces} == {"ENG", "SEC"}  # both pages followed
     assert spaces[0]["name"] == "Engineering"
+    assert "/wiki/api/v2/spaces" in calls[0]  # v2 endpoint
 
 
 def test_web_confluence_spaces_requires_signin_then_lists(tmp_path):

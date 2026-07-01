@@ -48,7 +48,9 @@ OAUTH_SPECS: dict[str, dict] = {
         "label": "Confluence",
         "authorize_url": "https://auth.atlassian.com/authorize",
         "token_url": "https://auth.atlassian.com/oauth/token",
-        "scopes": ["read:confluence-content.all", "read:confluence-space.summary", "offline_access"],
+        # Granular scopes for the Confluence Cloud REST API v2 (classic v1 scopes are
+        # retired). read:space + read:page cover listing spaces and reading page bodies.
+        "scopes": ["read:space:confluence", "read:page:confluence", "offline_access"],
         "extra_authorize": {"audience": "api.atlassian.com", "prompt": "consent"},
         "client_auth": "post",
         "id_field": "confluence_client_id", "secret_field": "confluence_client_secret",

@@ -11,30 +11,38 @@ from __future__ import annotations
 from .base import ConnectorError, TokenConnector
 
 
+# The OAuth (3LO) gateway; paths below are the Confluence Cloud REST API **v2**
+# (v1 /rest/api is retired → HTTP 410). v2 uses cursor pagination via _links.next.
+_GATEWAY = "https://api.atlassian.com/ex/confluence"
+
+
 def _cloud_get(cloud_id: str, token: str, path: str, timeout: int = 15):  # pragma: no cover - real network
     import json
     import urllib.request
 
-    url = f"https://api.atlassian.com/ex/confluence/{cloud_id}/rest/api{path}"
+    url = f"{_GATEWAY}/{cloud_id}{path}"  # path includes the full /wiki/api/v2/... prefix
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
         return json.loads(resp.read().decode("utf-8"))
 
 
-def list_spaces(token: str, cloud_id: str, fetch=None, max_spaces: int = 500) -> list[dict]:
-    """List the spaces the signed-in user can see: [{key, name}]. `fetch(cloud_id,
-    token, path) -> dict` is injectable so tests stay offline."""
+def _paged(cloud_id: str, token: str, path: str, fetch, cap: int) -> list[dict]:
+    """Follow v2 cursor pagination (data._links.next) up to `cap` items."""
     fetch = fetch or _cloud_get
-    spaces, start, limit = [], 0, 50
-    while len(spaces) < max_spaces:
-        data = fetch(cloud_id, token, f"/space?limit={limit}&start={start}")
-        results = data.get("results", [])
-        for s in results:
-            spaces.append({"key": s.get("key"), "name": s.get("name") or s.get("key")})
-        if len(results) < limit:
-            break
-        start += limit
-    return spaces
+    out: list[dict] = []
+    while path and len(out) < cap:
+        data = fetch(cloud_id, token, path)
+        out.extend(data.get("results", []))
+        nxt = (data.get("_links") or {}).get("next")
+        path = nxt or None  # next is a site-relative path like /wiki/api/v2/...
+    return out[:cap]
+
+
+def list_spaces(token: str, cloud_id: str, fetch=None, max_spaces: int = 500) -> list[dict]:
+    """List the spaces the signed-in user can see: [{key, name, id}]. `fetch(cloud_id,
+    token, path) -> dict` is injectable so tests stay offline. Confluence REST v2."""
+    rows = _paged(cloud_id, token, "/wiki/api/v2/spaces?limit=100", fetch, max_spaces)
+    return [{"key": s.get("key"), "name": s.get("name") or s.get("key"), "id": s.get("id")} for s in rows]
 
 
 class ConfluenceConnector(TokenConnector):
@@ -80,30 +88,22 @@ class ConfluenceConnector(TokenConnector):
         return _client
 
     def _oauth_client(self):  # pragma: no cover - real network path
-        """OAuth 2.0 (3LO): Bearer token against the Atlassian Cloud REST API."""
-        import json
-        import urllib.parse
-        import urllib.request
-
-        base = f"https://api.atlassian.com/ex/confluence/{self.cloud_id}/rest/api"
-        headers = {"Authorization": f"Bearer {self.token}", "Accept": "application/json"}
-
+        """OAuth 2.0 (3LO): Bearer token against the Confluence Cloud REST API v2."""
         def _client(space_key: str):
-            docs, start, limit = [], 0, 50
-            while len(docs) < self.max_items:
-                qs = urllib.parse.urlencode({"spaceKey": space_key, "expand": "body.storage",
-                                             "limit": limit, "start": start})
-                req = urllib.request.Request(f"{base}/content?{qs}", headers=headers)
-                with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310
-                    data = json.loads(resp.read().decode("utf-8"))
-                results = data.get("results", [])
-                for p in results:
-                    docs.append({"name": p.get("title"),
-                                 "text": (p.get("body", {}).get("storage", {}) or {}).get("value", ""),
-                                 "url": (p.get("_links", {}) or {}).get("webui", "")})
-                if len(results) < limit:
-                    break
-                start += limit
+            # v2 addresses pages by numeric space id, so resolve the key first.
+            spaces = _paged(self.cloud_id, self.token,
+                            f"/wiki/api/v2/spaces?keys={space_key}&limit=1", None, 1)
+            if not spaces:
+                return []
+            sid = spaces[0].get("id")
+            pages = _paged(self.cloud_id, self.token,
+                           f"/wiki/api/v2/spaces/{sid}/pages?body-format=storage&limit=100",
+                           None, self.max_items)
+            docs = []
+            for p in pages:
+                body = ((p.get("body") or {}).get("storage") or {}).get("value", "")
+                docs.append({"name": p.get("title"), "text": body,
+                             "url": (p.get("_links") or {}).get("webui", "")})
             return docs
 
         return _client
