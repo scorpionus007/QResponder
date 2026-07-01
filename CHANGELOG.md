@@ -7,9 +7,20 @@ versioning.
 ## [Unreleased]
 
 ### Added
+- **Ask screen (dashboard).** Surfaces the existing Ask endpoint
+  (`POST /api/workspaces/{id}/ask` → `run_ask`, the same grounded path) as a UI
+  screen: a question box, the same live provider/model picker as Upload (configured
+  only, unreachable blocks, keys server-side), and an optional tag scope + per-source
+  include/exclude (Phase-10C). Renders the answer **only with its grounding** — a
+  confidence chip, expandable citations, and the audit chain (retrieved → cited →
+  faithfulness → confidence) — and renders the honest abstention (`needs_review` +
+  missing info) when the KB doesn't support it, never a fabricated answer. UI only;
+  no new backend/answering logic. New nav order: **Upload · Knowledge Base · Ask ·
+  Settings**.
 - **Polished dashboard UI (Phase 11).** A dark command-center web UI over the
   existing engine — **reimplements no answering logic**; the single grounded path
-  stays the only path. Persistent top nav (**Upload · Knowledge Base · Settings**),
+  stays the only path. Persistent top nav (**Upload · Knowledge Base · Ask ·
+  Settings**),
   a live model-status pill (name only, never a key), no login/account.
   - **Upload** — per-batch live provider/model picker (configured providers only;
     unreachable blocks the run, no mock fallback), Phase-7 presets (style only),

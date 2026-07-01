@@ -64,3 +64,18 @@ def test_web_ask_returns_grounded_answer_no_key(tmp_path):
     assert body["citations"]
     assert body["audit"]["confidence_rationale"]
     assert "SECRET" not in r.text  # key never returned
+
+
+def test_web_ask_unsupported_abstains_not_fabricated(tmp_path):
+    """Ask screen wiring: an unsupported question comes back as needs_review with no
+    invented answer — the abstention the UI renders, never a bare guess."""
+    client = _client(tmp_path)
+    wid = client.post("/api/workspaces", json={"name": "W"}).json()["id"]
+    client.post(f"/api/workspaces/{wid}/kb",
+                files=[("files", ("incident.md", INCIDENT_MD, "text/markdown"))])
+    r = client.post(f"/api/workspaces/{wid}/ask",
+                    json={"question": "What is your office lease expiration date in Tokyo?", "tags": "soc2"})
+    body = r.json()
+    assert body["status"] == "needs_review"
+    # Grounding held: no confident fabricated answer slipped through.
+    assert body["confidence"] != "high"

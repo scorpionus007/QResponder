@@ -87,6 +87,7 @@ function go(page) {
   root().replaceChildren(view);
   const wid = S.current;
   if (page === "kb") kbPage(view, wid);
+  else if (page === "ask") askPage(view, wid);
   else if (page === "settings") settingsPage(view, wid);
   else uploadPage(view, wid);
 }
@@ -294,6 +295,109 @@ async function renderBatchResults(host, batchId) {
       f.artifact ? el("a", { class: "btn ghost sm", href: `/api/runs/${batchId}/files/${encodeURIComponent(f.stem)}/download`, download: "" }, "Download") : el("span"));
   });
   host.replaceChildren(el("div", { class: "card" }, el("h2", {}, "Batch results"), ...rows));
+}
+
+// ============================================================================
+// Ask screen — one question through the SAME grounded path (run_ask/orchestrate).
+// Thin: POST /api/workspaces/{id}/ask; renders answer + confidence + citations +
+// audit, or the honest abstention. No answering logic here.
+// ============================================================================
+const CONF_CLASS = { high: "high", medium: "medium", low: "low" };
+
+function askPage(view, wid) {
+  view.append(el("div", { class: "page-head" }, el("h1", {}, "Ask"),
+    el("div", { class: "sub" }, "Ask one question and get a grounded, cited answer — the exact same path as a questionnaire. If your KB doesn't support it, it says so instead of guessing.")));
+
+  const provSel = el("select", {}, el("option", { value: "" }, `default (${S.status.provider})`));
+  const modelSel = el("select", {}, el("option", { value: "" }, "default model"));
+  loadProviders(provSel, modelSel);
+  const tags = el("input", { placeholder: "tag scope (optional, defaults to workspace)" });
+  const incl = el("input", { placeholder: "include only these sources (name/tag, comma-sep)" });
+  const excl = el("input", { placeholder: "exclude these sources (name/tag, comma-sep)" });
+  const question = el("textarea", { placeholder: "e.g. Do you encrypt customer data at rest?", style: "min-height:90px" });
+
+  const controls = el("div", { class: "card" },
+    el("label", { class: "field" }, el("span", {}, "Question"), question),
+    el("div", { class: "row" },
+      el("label", { class: "field" }, "Provider", provSel),
+      el("label", { class: "field" }, "Model", modelSel),
+      el("label", { class: "field" }, "Tag scope", tags)),
+    el("div", { class: "row" },
+      el("label", { class: "field" }, "Include sources", incl),
+      el("label", { class: "field" }, "Exclude sources", excl)),
+    el("p", { class: "muted" }, "Keys stay server-side — only names are shown. An unreachable provider blocks the run (no mock fallback)."));
+
+  const progress = el("div", { class: "muted hidden" }, el("span", { class: "spinner" }), " Thinking…");
+  const err = el("div", {});
+  const out = el("div", {});
+  const askBtn = el("button", { class: "btn primary", onclick: async () => {
+    if (!question.value.trim()) return;
+    err.replaceChildren(); out.replaceChildren(); progress.classList.remove("hidden"); askBtn.disabled = true;
+    try {
+      const r = await jpost(`/api/workspaces/${wid}/ask`, {
+        question: question.value,
+        provider: provSel.value || null, model: modelSel.value || null,
+        tags: csv(tags.value), include_sources: csv(incl.value), exclude_sources: csv(excl.value),
+      });
+      out.replaceChildren(groundedResult(r));
+    } catch (e) { err.replaceChildren(el("div", { class: "error" }, e.message)); }
+    finally { progress.classList.add("hidden"); askBtn.disabled = false; }
+  } }, "Ask");
+
+  controls.append(el("div", { class: "btn-row" }, askBtn, progress), err);
+  view.append(controls, out);
+}
+
+// Shared grounded-result renderer — answer NEVER shown without its grounding
+// (confidence + citations, or the honest abstention).
+function groundedResult(r) {
+  const flagged = r.status === "needs_review" || (r.review_reason && r.review_reason !== "none");
+  const card = el("div", { class: "item" + (flagged ? "" : " accepted") });
+  const badges = el("div", { class: "badges" },
+    el("span", { class: "chip " + (CONF_CLASS[r.confidence] || "low") }, r.confidence));
+  if (flagged) badges.append(el("span", { class: "chip review" }, (r.review_reason || "needs review").replace(/_/g, " ")));
+  else badges.append(el("span", { class: "chip done" }, r.status));
+  card.append(el("div", { class: "item-head" }, el("div", { class: "q-text" }, r.question_text), badges));
+
+  if (flagged && !r.answer) {
+    card.append(el("div", { class: "panel warn" }, el("h4", {}, "No grounded answer found — flagged for review"),
+      el("div", {}, r.missing_info || "The knowledge base doesn't support an answer to this question. Add a supporting document or an approved answer, then ask again.")));
+  } else {
+    card.append(el("div", { class: "answer-box" }, el("div", { class: "panel" }, r.answer || "(no answer)")));
+    if (flagged && r.missing_info) card.append(el("div", { class: "panel warn" }, el("h4", {}, "Why flagged"), r.missing_info));
+  }
+
+  const cites = citationsBlock(r.citations);
+  if (cites) card.append(cites);
+  else if (!flagged) card.append(el("p", { class: "muted" }, "No citations attached."));
+  const audit = auditBlock(r.audit);
+  if (audit) card.append(audit);
+  return card;
+}
+
+function citationsBlock(cites) {
+  if (!cites || !cites.length) return null;
+  const d = el("details", {}, el("summary", {}, `${cites.length} citation(s)`));
+  for (const c of cites) d.append(el("div", { class: "cite" },
+    el("span", { class: "src" }, c.source), " ",
+    (c.faithful === true ? "✓ " : c.faithful === false ? "✗ " : ""), c.snippet));
+  return d;
+}
+
+function auditBlock(a) {
+  if (!a) return null;
+  const d = el("details", {}, el("summary", {}, "Audit — retrieved → cited → faithfulness → confidence"));
+  const box = el("div", { class: "panel" });
+  if ((a.retrieved || []).length) box.append(el("div", { class: "muted" }, `Retrieved ${a.retrieved.length} candidate(s) from the KB.`));
+  if ((a.cited || []).length) box.append(el("div", { class: "muted" }, `Cited ${a.cited.length} source(s).`));
+  if (a.faithfulness && a.faithfulness.passed != null)
+    box.append(el("div", { class: a.faithfulness.passed ? "ok-msg" : "error" },
+      `Faithfulness: ${a.faithfulness.passed ? "passed" : "failed"}${a.faithfulness.reason ? " — " + a.faithfulness.reason : ""}`));
+  if (a.confidence_rationale) box.append(el("div", { class: "muted" }, "Confidence: " + a.confidence_rationale));
+  if ((a.sources_used || []).length) box.append(el("div", { class: "faint" }, "Sources used: " + a.sources_used.join(", ")));
+  if ((a.sources_excluded || []).length) box.append(el("div", { class: "faint" }, "Sources excluded: " + a.sources_excluded.join(", ")));
+  d.append(box);
+  return d;
 }
 
 // ============================================================================

@@ -73,7 +73,7 @@ the wizard's *Run locally (private, no key)* path is the zero-config default.
 ### The dashboard (Phase 11)
 
 A polished, dark **command-center** UI with a persistent top nav — **Upload ·
-Knowledge Base · Settings** — a live model-status pill (green ● `provider/model`
+Knowledge Base · Ask · Settings** — a live model-status pill (green ● `provider/model`
 when reachable, red + reason when not; **name only, never a key**), and a
 workspace switcher. No login, no account — it stays a local, single-user tool.
 
@@ -95,6 +95,12 @@ workspace switcher. No login, no account — it stays a local, single-user tool.
   Export CSV → fill → Import → **Sync with KB** clears matched), and **Duplicates**
   (a `kb-check` scan; opt-in merge version-bumps the canonical, never deletes;
   contradictions are shown for you to resolve).
+- **Ask** — ask one question and get a grounded, cited answer through the **exact
+  same path** as a questionnaire (same live model picker; optional tag scope and
+  per-source include/exclude). The answer always comes with its confidence chip
+  and expandable citations + audit (retrieved → cited → faithfulness → confidence),
+  and when the KB doesn't support it you get an honest **"No grounded answer found
+  — flagged for review"** with what's missing, never a fabricated answer.
 
 ### Workspaces
 
