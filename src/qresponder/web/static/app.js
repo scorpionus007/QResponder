@@ -225,12 +225,18 @@ async function loadProviders(provSel, modelSel) {
     provSel.append(opt);
   }
   const fill = (name) => {
-    const p = provs.find((x) => x.name === name);
+    // Empty value = "default provider" → resolve to the active one so its models show.
+    const resolved = name || (S.status && S.status.provider);
+    const p = provs.find((x) => x.name === resolved);
     modelSel.replaceChildren(el("option", { value: "" }, "default model"));
     for (const m of (p?.models || [])) modelSel.append(el("option", { value: m.id }, m.name || m.id));
     if (p && !p.reachable && p.configured) modelSel.append(el("option", { value: "", disabled: "disabled" }, `(${p.reason || "unreachable"})`));
+    if (p && p.configured && !(p.models || []).length) modelSel.append(el("option", { value: "", disabled: "disabled" }, "(no models listed)"));
   };
   provSel.addEventListener("change", () => fill(provSel.value));
+  // Populate the model list on load for the active/default provider — don't wait
+  // for the user to re-pick the provider.
+  fill(provSel.value);
 }
 async function loadPresets(sel, wid) {
   try {
