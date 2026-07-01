@@ -383,19 +383,42 @@ Tier-1 answer.
 
 ## Source connectors — point it at where your docs live
 
-Instead of uploading by hand, ingest from a **folder** or **website** (Google
-Drive optional, behind the `connectors` extra) — locally, so data stays on the
-host:
+Instead of uploading by hand, ingest from where your documents already live —
+**folder**, **website**, **Confluence**, **Notion**, **SharePoint**, **OneDrive**,
+or **Google Drive**:
 
 ```
 qresponder connect folder ./policies --workspace acme --tags soc2
 qresponder connect website https://docs.example.com --workspace acme --depth 1 --max-pages 20
+qresponder connect confluence ENGSPACE --workspace acme --tags soc2
+qresponder connect notion <database-id> --workspace acme
+qresponder connect sharepoint <site-id> --workspace acme
+qresponder connect onedrive Policies/Security --workspace acme
 ```
 
-Everything goes through the same validation/sandboxing/provenance/tagging as
-manual uploads. The crawler is **bounded** (depth/max-pages, same-domain,
-per-request timeout) and **SSRF-guarded** (rejects `localhost`, private/link-local
-ranges, and cloud-metadata IPs unless you pass `--allow-private`).
+Everything goes through the same validation / sandboxing / provenance / tagging as
+manual uploads — no reimplemented ingestion. The web UI has a **Connect a source**
+panel (in Settings) that lists every connector and the fields each needs.
+
+**The boundary, unchanged:** connector credentials live in `.env` on the server
+and are **never sent to the browser**; connectors run **only** on an explicit
+`connect` — **never during answering** (a test trips a fuse if a connector ever
+fires on the answering path). Local answering stays zero-egress. The website
+crawler is **bounded** (depth/max-pages, same-domain, per-request timeout) and
+**SSRF-guarded** (rejects `localhost`, private/link-local, and cloud-metadata IPs
+unless you pass `--allow-private`); the same guard applies to any connector base
+URL. The SaaS connectors (Confluence/Notion/SharePoint/OneDrive/Drive) are
+**extras-gated** (`pip install "qresponder[connectors]"`) and lazy-imported, so the
+slim image and the zero-dep default path are unaffected.
+
+## Regenerate an answer
+
+On the **Ask** screen, every grounded answer has a **Regenerate** — it re-runs the
+question through the **same grounded path** (optionally with a one-line *guidance*
+note that behaves like a per-question preset: **style only**, subordinate to
+grounding). Regenerate can't force an answer: `snippet_supported` + faithfulness
+still apply, so an unsupported question keeps abstaining. **Save to library**
+promotes the answer via the flywheel (`approve_one`) so it's reused next time.
 
 > **Boundary:** connectors are the **only** external-call path besides cloud
 > answering, and they run **only** when you explicitly `connect` — **never
@@ -522,6 +545,7 @@ qresponder ask "Do you encrypt at rest?" --workspace acme [--provider P --model 
 qresponder stats --workspace acme                        # local completion/auto-answer analytics
 qresponder connect folder ./docs --workspace acme        # ingest a folder (explicit; never auto)
 qresponder connect website https://example.com --workspace acme --depth 1 --max-pages 20
+qresponder connect confluence|notion|sharepoint|onedrive <target> --workspace acme  # SaaS (creds in .env)
 qresponder extract --questionnaire f.xlsx        # debug: dump extracted questions
 qresponder eval --set eval.yaml [--kb ./kb] [--qa qa.yaml] [--mode retrieval]
 qresponder approve --results out/results.json --qa qa.yaml [--by NAME] [--tags ...]

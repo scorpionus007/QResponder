@@ -7,6 +7,31 @@ versioning.
 ## [Unreleased]
 
 ### Added
+- **Design-system overhaul (front-end only; engine unchanged).** A single design-
+  token layer (`tokens.css`) — cool ink neutral ramp with real elevation, a
+  disciplined violet→blue accent ramp (subtle fills/hover/active; gradient reserved
+  for the one primary action + the signature), calibrated semantic ramps
+  (ok/warn/danger/info) that drive confidence colors, an AA-checked text ramp
+  (fixes the low-contrast "dead" greys), a modular type scale with mono reserved for
+  source tags/console/IDs, and spacing/radius/elevation/motion scales (with
+  `prefers-reduced-motion` honored). `styles.css` rebuilt on tokens only — polished
+  buttons/inputs/cards/pills/tables/modals/toasts/tabs/tiles, loading skeletons,
+  real empty states, visible focus rings, and the signature **provenance rail** that
+  ties grounded answers and citations to their source. Applied across every screen.
+- **Inline Regenerate.** `POST /api/workspaces/{id}/regenerate` re-runs one question
+  through the **same** `run_ask`/orchestrate path (shared with Ask), with an optional
+  **style-only** `guidance` note that overrides the preset but only reaches
+  `prompts.style_block`. It cannot force an answer — `snippet_supported` +
+  faithfulness + abstain still apply. The Ask screen gets Regenerate + Save-to-library
+  (trains via `approve_one`).
+- **More named connectors.** Confluence, Notion, SharePoint, and OneDrive over the
+  Phase-10B `Connector` interface (shared `TokenConnector` base): credentials
+  server-side (`.env`), ingest via the existing bulk path (validation / sandboxing /
+  provenance / tags), extras-gated + lazy-imported, injectable clients so tests run
+  offline, SSRF-guarded base URLs, bounded by `max_items`. `qresponder connect
+  confluence|notion|sharepoint|onedrive`, a **Connect a source** panel, and
+  `GET /api/connectors` (fields + configured state, never the credential).
+  Connectors run **only** on explicit `connect`, never during answering.
 - **Ask screen (dashboard).** Surfaces the existing Ask endpoint
   (`POST /api/workspaces/{id}/ask` → `run_ask`, the same grounded path) as a UI
   screen: a question box, the same live provider/model picker as Upload (configured
