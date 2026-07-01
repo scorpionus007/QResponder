@@ -7,6 +7,17 @@ versioning.
 ## [Unreleased]
 
 ### Added
+- **OAuth login for connectors (Notion, Google Drive, Confluence).** Sign in with
+  the provider in the browser instead of pasting a personal token. Standard
+  Authorization Code + PKCE (`connectors/oauth.py`) — the **client secret and the
+  access token stay server-side** and never reach the browser. New endpoints
+  `GET /api/oauth/{provider}/start`, `GET /api/oauth/callback`, `GET /api/oauth/status`,
+  `DELETE /api/oauth/{provider}`; `/connect` prefers the stored OAuth token over a
+  static `.env` token; the Connect panel shows a **Sign in with …** button and a
+  signed-in chip. Requires a one-time registered OAuth app per provider
+  (`*_client_id` / `*_client_secret` in `.env`, redirect URI `…/api/oauth/callback`).
+  Connectors still run only on explicit connect, never during answering. Also fixed
+  `/connect` to accept array tags from the UI.
 - **Design-system overhaul (front-end only; engine unchanged).** A single design-
   token layer (`tokens.css`) — cool ink neutral ramp with real elevation, a
   disciplined violet→blue accent ramp (subtle fills/hover/active; gradient reserved

@@ -411,6 +411,28 @@ URL. The SaaS connectors (Confluence/Notion/SharePoint/OneDrive/Drive) are
 **extras-gated** (`pip install "qresponder[connectors]"`) and lazy-imported, so the
 slim image and the zero-dep default path are unaffected.
 
+### Connect with OAuth (Notion · Google Drive · Confluence)
+
+Rather than pasting a personal token, you can **Sign in** with the provider from
+**Knowledge Base ▸ Documents & sources**. It's standard OAuth 2.0 (Authorization
+Code + PKCE): you approve access in a new tab, and the resulting token is stored
+**server-side** — it never touches the browser, and neither does the client secret.
+
+OAuth needs a **one-time registered app per provider** (this is inherent to OAuth —
+the tool can't create it for you). Register the app, set its redirect URI to
+`http://127.0.0.1:8000/api/oauth/callback`, and put the client id/secret in `.env`:
+
+| Provider | Register at | `.env` |
+| --- | --- | --- |
+| Notion | notion.so → My integrations → **Public** integration (OAuth) | `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET` |
+| Google Drive | Google Cloud Console → OAuth client (Drive API, `drive.readonly`) | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` |
+| Confluence | Atlassian developer console → OAuth 2.0 (3LO) app | `CONFLUENCE_CLIENT_ID`, `CONFLUENCE_CLIENT_SECRET` |
+
+(If your server isn't at `127.0.0.1:8000`, set `OAUTH_REDIRECT_BASE` to match.) Once
+the app is configured the panel shows **Sign in with …**; after you approve, it flips
+to a signed-in chip and Connect ingests the space/database/folder you name. No app
+registered? The plain **paste-a-token-in-`.env`** path still works.
+
 ## Regenerate an answer
 
 On the **Ask** screen, every grounded answer has a **Regenerate** — it re-runs the
