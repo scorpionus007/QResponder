@@ -131,6 +131,7 @@ def create_app(config: Config | None = None, model_fetch=None) -> FastAPI:
     app.state.oauth_fetch = None  # injectable token-exchange HTTP fetcher (tests)
     app.state.oauth_cloud_fetch = None  # injectable Atlassian cloud-id fetcher (tests)
     app.state.confluence_fetch = None  # injectable Confluence Cloud GET (space listing; tests)
+    app.state.connector_client = None  # injectable SaaS client for connection test/sync (tests)
 
     # ---- run machinery (shared by legacy + workspace runs) -----------------
     def _emit(job: _Job, event: dict):
@@ -391,13 +392,153 @@ def create_app(config: Config | None = None, model_fetch=None) -> FastAPI:
                     token["cloud_id"] = cid
             except Exception:  # noqa: BLE001
                 pass
-        oauth_tokens.save(provider, token)  # server-side only
+        wid = flow.get("wid")
+        if wid:
+            # Connections-UI flow: store the token as this workspace connection's secret
+            # (server-side), so it never touches the browser.
+            try:
+                from ..core.connections import ConnectionStore
+
+                cstore = ConnectionStore(store.get(wid).path)
+                cstore.create(provider, flow.get("label"), config={}, secret=token, status="connected")
+            except Exception:  # noqa: BLE001
+                oauth_tokens.save(provider, token)
+        else:
+            oauth_tokens.save(provider, token)  # legacy global sign-in
         return _page("Connected ✓", True)
 
     @app.delete("/api/oauth/{provider}")
     def oauth_disconnect(provider: str):
         oauth_tokens.forget(provider)
         return {"provider": provider, "connected": False}
+
+    # ---- Prowler-style Connections: configured sources with a server-side secret ---
+    def _cstore(wid: str):
+        from ..core.connections import ConnectionStore
+
+        return ConnectionStore(_ws(wid).path)
+
+    def _conn_public(conn) -> dict:
+        import json as _json
+
+        return _json.loads(conn.model_dump_json())  # never carries a secret by construction
+
+    @app.get("/api/workspaces/{wid}/connections")
+    def list_connections(wid: str):
+        return {"connections": [_conn_public(c) for c in _cstore(wid).list()]}
+
+    def _build_from(conn, store, probe: bool):
+        from ..core.connections import build_connector
+
+        tags = normalize_tags(conn.config.get("tags"))
+        return build_connector(conn.type, conn.config, store.get_secret(conn.id), tags=tags,
+                               client=app.state.connector_client, probe=probe)
+
+    @app.post("/api/workspaces/{wid}/connections/test")
+    def test_connection_ephemeral(wid: str, body: dict = Body(...)):
+        """Test an UNSAVED config+secret (Prowler test-before-save). The secret is used
+        transiently and never stored or echoed back."""
+        from ..connectors.base import ConnectorError
+        from ..core.connections import CONNECTION_TYPES, Connection, build_connector
+
+        _ws(wid)
+        t = str(body.get("type", "")).lower()
+        if t not in CONNECTION_TYPES:
+            raise HTTPException(status_code=400, detail="unknown connection type")
+        secret = {"token": body["token"]} if body.get("token") else None
+        conn = Connection(id="probe", type=t, label=t, config=body.get("config") or {})
+        try:
+            c = build_connector(t, conn.config, secret, tags=normalize_tags((body.get("config") or {}).get("tags")),
+                                client=app.state.connector_client, probe=True)
+            return c.test_connection()  # {ok, detail} — detail never includes the secret
+        except ConnectorError as exc:
+            return {"ok": False, "detail": str(exc)}
+
+    @app.post("/api/workspaces/{wid}/connections")
+    def create_connection(wid: str, body: dict = Body(...)):
+        """Create a folder/website (no secret) or token-based connection. A token is
+        stored SERVER-SIDE and never returned."""
+        from ..core.connections import CONNECTION_TYPES
+
+        store = _cstore(wid)
+        t = str(body.get("type", "")).lower()
+        if t not in CONNECTION_TYPES:
+            raise HTTPException(status_code=400, detail="unknown connection type")
+        secret = {"token": body["token"]} if body.get("token") else None
+        status = "connected" if (t in {"folder", "website"} or secret) else "needs_auth"
+        conn = store.create(t, body.get("label"), config=body.get("config") or {}, secret=secret, status=status)
+        return {"connection": _conn_public(conn)}  # no secret in the response
+
+    @app.patch("/api/workspaces/{wid}/connections/{cid}")
+    def patch_connection(wid: str, cid: str, body: dict = Body(...)):
+        conn = _cstore(wid).update(cid, label=body.get("label"), config=body.get("config"))
+        if conn is None:
+            raise HTTPException(status_code=404, detail="connection not found")
+        return {"connection": _conn_public(conn)}
+
+    @app.post("/api/workspaces/{wid}/connections/{cid}/test")
+    def test_connection(wid: str, cid: str):
+        from ..connectors.base import ConnectorError
+
+        store = _cstore(wid)
+        conn = store.get(cid)
+        if conn is None:
+            raise HTTPException(status_code=404, detail="connection not found")
+        try:
+            res = _build_from(conn, store, probe=True).test_connection()
+        except ConnectorError as exc:
+            res = {"ok": False, "detail": str(exc)}
+        store.update(cid, status="connected" if res.get("ok") else "error")
+        return res
+
+    @app.post("/api/workspaces/{wid}/connections/{cid}/sync")
+    def sync_connection(wid: str, cid: str, body: dict = Body(default={})):
+        """Fetch + ingest into kb/ via the existing bulk path. Explicit only."""
+        from ..connectors.base import ConnectorError, ingest_connector
+
+        store = _cstore(wid)
+        conn = store.get(cid)
+        if conn is None:
+            raise HTTPException(status_code=404, detail="connection not found")
+        if body and body.get("config"):
+            conn = store.update(cid, config=body["config"])
+        tags = normalize_tags(conn.config.get("tags"))
+        try:
+            res = ingest_connector(_build_from(conn, store, probe=False), _ws(wid).kb_dir, tags=tags)
+        except ConnectorError as exc:
+            store.update(cid, status="error")
+            raise HTTPException(status_code=400, detail=str(exc))
+        from ..core.connections import _now
+
+        ls = _now()
+        store.update(cid, status="connected", last_synced=ls)
+        return {"ingested": len(res.get("accepted", [])), "skipped": res.get("rejected", []),
+                "files": res.get("files", []), "last_synced": ls}
+
+    @app.delete("/api/workspaces/{wid}/connections/{cid}")
+    def delete_connection(wid: str, cid: str):
+        _cstore(wid).delete(cid)  # removes the connection AND its stored secret
+        return {"deleted": cid}
+
+    @app.get("/api/workspaces/{wid}/connections/{ctype}/authorize")
+    def connection_authorize(wid: str, ctype: str, label: str = ""):
+        """Start OAuth for a workspace connection — the browser is sent to the provider
+        consent; the token is exchanged + stored server-side by the callback."""
+        from ..connectors.oauth import (OAUTH_SPECS, authorize_url, client_credentials,
+                                         make_pkce, make_state)
+
+        _ws(wid)
+        if ctype not in OAUTH_SPECS:
+            raise HTTPException(status_code=400, detail="not an OAuth source")
+        client_id, secret = client_credentials(config, ctype)
+        if not (client_id and secret):
+            raise HTTPException(status_code=400,
+                                detail=f"{OAUTH_SPECS[ctype]['label']} OAuth app not configured — set its client id/secret in .env.")
+        state = make_state()
+        verifier, challenge = make_pkce()
+        redirect_uri = config.oauth_redirect_base.rstrip("/") + "/api/oauth/callback"
+        oauth_pending[state] = {"provider": ctype, "verifier": verifier, "wid": wid, "label": label or OAUTH_SPECS[ctype]["label"]}
+        return {"authorize_url": authorize_url(ctype, client_id, redirect_uri, state, challenge)}
 
     @app.get("/api/connectors/confluence/spaces")
     def confluence_spaces():

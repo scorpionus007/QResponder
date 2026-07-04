@@ -76,6 +76,20 @@ class WebsiteConnector(Connector):
         self.tags = list(tags or [])
         self._fetch = fetch or (lambda u: _default_fetch(u, self.timeout))
 
+    def test_connection(self) -> dict:
+        if not ssrf_ok(self.url, self.allow_private):
+            return {"ok": False, "detail": f"Blocked by SSRF guard (localhost/private/metadata): {self.url}"}
+        orig = self.max_pages
+        self.max_pages = 1
+        try:
+            docs = self.fetch()
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "detail": f"{type(exc).__name__}: {exc}"}
+        finally:
+            self.max_pages = orig
+        return ({"ok": True, "detail": f"Fetched the start URL ({len(docs)} page(s))."}
+                if docs else {"ok": False, "detail": "No readable content at that URL."})
+
     def fetch(self) -> list[SourceDoc]:
         if not ssrf_ok(self.url, self.allow_private):
             raise ConnectorError(f"Blocked by SSRF guard (localhost/private/metadata): {self.url}")

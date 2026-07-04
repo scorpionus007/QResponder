@@ -24,10 +24,22 @@ class SourceDoc:
 
 class Connector(ABC):
     """Fetches documents from a user-specified source. Called only by an explicit
-    `connect` command — never during answering."""
+    `connect`/`test`/`sync` — never during answering."""
 
     @abstractmethod
     def fetch(self) -> list[SourceDoc]: ...
+
+    def test_connection(self) -> dict:
+        """Prowler-style reachability check: {ok, detail}. Default tries a fetch and
+        never leaks a secret in the detail (only the error type/message). Subclasses
+        override with a cheaper probe."""
+        try:
+            docs = self.fetch()
+            return {"ok": True, "detail": f"Reached the source — {len(docs)} document(s) visible."}
+        except ConnectorError as exc:
+            return {"ok": False, "detail": str(exc)}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "detail": f"{type(exc).__name__}: {exc}"}
 
 
 def _doc_name(raw: str, default_ext: str) -> str:
@@ -63,6 +75,15 @@ class TokenConnector(Connector):
         self._client = client
         self.timeout = timeout
         self.max_items = max(1, max_items)
+
+    def test_connection(self) -> dict:
+        """Clamp the fetch to a few items so a reachability check is cheap."""
+        orig = self.max_items
+        self.max_items = min(3, orig)
+        try:
+            return super().test_connection()
+        finally:
+            self.max_items = orig
 
     def _make_client(self):  # pragma: no cover - real network/SDK path
         """Build the real SaaS client, lazy-importing its extras-gated SDK. Subclasses

@@ -17,6 +17,14 @@ class FolderConnector(Connector):
         self.base = Path(path)
         self.tags = list(tags or [])
 
+    def test_connection(self) -> dict:
+        if not self.base.exists():
+            return {"ok": False, "detail": f"Path not found: {self.base}"}
+        if not self.base.is_dir():
+            return {"ok": False, "detail": f"Not a directory: {self.base}"}
+        n = sum(1 for fp in self.base.rglob("*") if fp.is_file())
+        return {"ok": True, "detail": f"Folder OK — {n} file(s) present."}
+
     def fetch(self) -> list[SourceDoc]:
         if not self.base.exists() or not self.base.is_dir():
             raise ConnectorError(f"Not a directory: {self.base}")
