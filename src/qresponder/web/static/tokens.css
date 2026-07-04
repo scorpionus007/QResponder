@@ -10,6 +10,7 @@
   --surface-3:  #232c39;   /* highest: hovers, inset wells */
   --border:     #2a3340;   /* hairline on surface-1 */
   --border-2:   #384454;   /* stronger: inputs, dividers under attention */
+  --console-bg: #070a0f;   /* AI-Thinking console — deepest, below --bg */
 
   /* -- text ramp (AA-checked on --surface-1 and darker) -- */
   --text-1:     #f3f6fa;   /* headings / primary — ~15:1 */
