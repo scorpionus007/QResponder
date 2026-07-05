@@ -7,6 +7,21 @@ versioning.
 ## [Unreleased]
 
 ### Added
+- **In-UI Connections manager (Prowler-style).** Configure every source from the
+  browser — **Knowledge Base ▸ Documents & sources**: click **+ Add Connection**,
+  pick the source, fill only the fields it needs, **Test connection** (must pass
+  before Save), and it appears in a Connections list (status pill · last-synced ·
+  Test · **Sync now** · Remove). **The credential boundary is enforced:** a
+  connection is a non-secret record (`{id, type, label, config, status, last_synced}`);
+  secrets/tokens live in a separate server-side store keyed by id and are **never**
+  returned to the browser, echoed after entry, or logged. OAuth sources use the
+  redirect flow (token exchanged + stored server-side); token sources take a field
+  POSTed once over loopback and stored server-side. New: `core/connections.py`
+  (`ConnectionStore`, `build_connector`), connector `test_connection()`, and
+  `GET/POST/PATCH/DELETE …/connections`, `…/connections/test`,
+  `…/connections/{id}/test`, `…/connections/{id}/sync`,
+  `…/connections/{type}/authorize`. Connectors fetch only on explicit Test/Sync,
+  never during answering; SSRF guard on URL inputs; extras-gated + offline-tested.
 - **OAuth login for connectors (Notion, Google Drive, Confluence).** Sign in with
   the provider in the browser instead of pasting a personal token. Standard
   Authorization Code + PKCE (`connectors/oauth.py`) — the **client secret and the

@@ -506,7 +506,7 @@ function documentsTab(host, wid) {
   host.append(el("div", { class: "card" }, el("h2", {}, "Knowledge base documents"),
     el("p", { class: "muted" }, "Cited when answering. Drop files, or connect a source below. Tag docs to scope which answer which questionnaire."),
     assetManager(wid, "kb")));
-  host.append(connectPanel(wid));
+  host.append(connectionsPanel(wid));
 }
 
 // --- Tab 1: Entries ---
@@ -808,128 +808,164 @@ async function settingsPage(view, wid) {
     } }, "Delete this workspace"))));
 }
 
-// ---- Connect a source (folder/website/SaaS connectors) ----
-function connectPanel(wid) {
-  const card = el("div", { class: "card" }, el("div", { style: "display:flex;gap:10px;align-items:center;margin-bottom:6px" },
-    el("span", { style: "color:var(--accent)" }, icon("plug")), el("h2", { style: "margin:0" }, "Connect a source")),
-    el("p", { class: "muted" }, "Pull documents from where they live into this workspace's KB. Credentials stay server-side in .env; connectors run only when you click Connect — never during answering."));
-  const sel = el("select", { "aria-label": "Connector type" });
-  const authHost = el("div", {});
-  const fieldsHost = el("div", {});
-  const tags = el("input", { class: "tagedit", placeholder: "tags (optional)" });
-  const status = el("div", {});
-  const connectBtn = el("button", { class: "btn primary" }, "Connect");
-  let conns = [];
-  const spec = () => conns.find((c) => c.type === sel.value);
-  const reload = () => api("/api/connectors").then((list) => { conns = list; renderFields(); });
+// ============================================================================
+// Connections — Prowler-style "Add a source" manager. Add → configure → Test
+// (must pass) → connected → Sync. Secrets go straight to the server, never shown.
+// ============================================================================
+const CONN_STATUS = { connected: "done", needs_auth: "review", error: "low", configured: "info" };
 
-  function renderAuth(c) {
-    authHost.replaceChildren();
-    if (!c.oauth) {
-      if (c.needs_cred && !c.configured)
-        authHost.append(el("div", { class: "warn-banner" }, `Credential not set — add ${c.cred_hint || "the token"} on the server, then Connect.`));
-      return true; // no oauth gate
-    }
-    if (!c.oauth_configured) {
-      authHost.append(el("div", { class: "warn-banner" },
-        `${c.label} sign-in isn't set up yet. Register an OAuth app and set its client id/secret in .env (redirect URI: this server + /api/oauth/callback). You can also paste a personal token in .env instead.`));
-      return c.configured; // may still be usable via a static .env token
-    }
-    if (c.oauth_connected) {
-      authHost.append(el("div", { class: "rail" },
-        el("span", { class: "rail-src" }, "signed in"),
-        el("div", { style: "display:flex;gap:10px;align-items:center" },
-          el("span", { class: "chip done" }, el("span", { class: "dot" }), `Signed in with ${c.label}`),
-          el("button", { class: "btn ghost sm", onclick: async () => {
-            await api(`/api/oauth/${c.oauth_provider}`, { method: "DELETE" }); toast(`Disconnected ${c.label}.`); reload();
-          } }, "Disconnect"))));
-      return true;
-    }
-    // Configured but not signed in → the Sign-in button.
-    const signIn = el("button", { class: "btn primary", onclick: async () => {
-      try {
-        const { authorize_url } = await api(`/api/oauth/${c.oauth_provider}/start`);
-        const w = window.open(authorize_url, "qr-oauth", "width=560,height=720");
-        toast(`Opened ${c.label} sign-in — approve, then come back.`);
-        const onMsg = (ev) => { if (ev.data === "qr-oauth-done") { window.removeEventListener("message", onMsg); clearInterval(poll); reload(); } };
-        window.addEventListener("message", onMsg);
-        // Fallback: poll status in case the popup can't postMessage back.
-        const poll = setInterval(async () => {
-          const st = await api("/api/oauth/status").catch(() => []);
-          if ((st.find((x) => x.provider === c.oauth_provider) || {}).connected) { clearInterval(poll); window.removeEventListener("message", onMsg); reload(); }
-          if (w && w.closed) { clearInterval(poll); }
-        }, 2000);
-      } catch (e) { toast(e.message, "bad"); }
-    } }, icon("plug"), `Sign in with ${c.label}`);
-    authHost.append(el("div", { class: "btn-row" }, signIn,
-      el("span", { class: "muted" }, "You'll approve access in a new tab. Your token is stored on the server, never in this page.")));
-    return false; // gate Connect until signed in
-  }
+function connectionsPanel(wid) {
+  const card = el("div", { class: "card" });
+  const head = el("div", { style: "display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:4px" },
+    el("div", { style: "display:flex;gap:10px;align-items:center" },
+      el("span", { style: "color:var(--accent)" }, icon("plug")), el("h2", { style: "margin:0" }, "Connections")),
+    el("button", { class: "btn primary sm", onclick: () => addConnection(wid, () => load()) }, "+ Add Connection"));
+  const sub = el("p", { class: "muted" }, "Pull documents from where they live into this workspace's KB. Credentials are stored on your server, never shown in this page; sources fetch only when you Sync — answering never leaves the host.");
+  const listHost = el("div", {});
+  card.append(head, sub, listHost);
 
-  function renderFields() {
-    const c = spec(); if (!c) return;
-    const ready = renderAuth(c);
-    // Confluence + signed in → offer a space PICKER (choose "Engineering" by name)
-    // and a page limit, instead of a raw space-key text field.
-    if (c.type === "confluence" && c.oauth_connected) { renderConfluencePicker(); }
-    else {
-      const inputs = {};
-      fieldsHost.replaceChildren(...c.fields.map((f) => {
-        const inp = el("input", { type: f.type === "number" ? "number" : "text", placeholder: f.label,
-          value: f.name === "depth" ? "1" : f.name === "max_pages" ? "20" : "" });
-        inputs[f.name] = inp;
-        return el("label", { class: "field" }, f.label, inp);
-      }));
-      fieldsHost._inputs = inputs;
+  async function load() {
+    listHost.replaceChildren(skeleton("sk-row", 2));
+    let conns = [];
+    try { conns = (await api(`/api/workspaces/${wid}/connections`)).connections; } catch (e) { listHost.replaceChildren(el("div", { class: "error" }, e.message)); return; }
+    if (!conns.length) {
+      listHost.replaceChildren(emptyState("plug", "No sources connected yet",
+        "Add Confluence, Google Drive, Notion, SharePoint, OneDrive, a folder, or a URL — then Sync to pull docs into your KB.",
+        el("button", { class: "btn primary", onclick: () => addConnection(wid, () => load()) }, "+ Add Connection")));
+      return;
     }
-    connectBtn.disabled = !ready;
-    connectBtn.title = ready ? "" : "Sign in first";
-    status.replaceChildren();
+    listHost.replaceChildren(...conns.map((c) => connRow(wid, c, load)));
   }
-
-  function renderConfluencePicker() {
-    const spaceSel = el("select", { "aria-label": "Confluence space" }, el("option", { value: "" }, "Loading spaces…"));
-    const spaceKey = el("input", { placeholder: "or type a space key (e.g. ENG)" });
-    const maxItems = el("input", { type: "number", value: "500", min: "1", "aria-label": "Max pages" });
-    // Effective space = the picked one, else the typed fallback.
-    fieldsHost._inputs = { space: { get value() { return spaceSel.value || spaceKey.value; } },
-                           max_items: maxItems };
-    fieldsHost.replaceChildren(
-      el("label", { class: "field" }, "Space (pulls the whole space)", spaceSel),
-      el("div", { class: "row" },
-        el("label", { class: "field" }, "Or space key", spaceKey),
-        el("label", { class: "field" }, "Max pages", maxItems)));
-    api("/api/connectors/confluence/spaces").then(({ spaces }) => {
-      if (!spaces || !spaces.length) { spaceSel.replaceChildren(el("option", { value: "" }, "No spaces found — type a key")); return; }
-      spaceSel.replaceChildren(el("option", { value: "" }, "Select a space…"),
-        ...spaces.map((s) => el("option", { value: s.key }, `${s.name} (${s.key})`)));
-    }).catch((e) => { spaceSel.replaceChildren(el("option", { value: "" }, "Couldn't list spaces — type a key")); toast(e.message, "bad"); });
-  }
-  connectBtn.addEventListener("click", async () => {
-    const c = spec(); if (!c) return;
-    const body = { type: c.type, tags: csv(tags.value) };
-    for (const [k, inp] of Object.entries(fieldsHost._inputs || {})) if (inp.value.trim()) body[k] = inp.value.trim();
-    connectBtn.disabled = true; status.replaceChildren(el("span", { class: "muted" }, el("span", { class: "spinner" }), " Connecting…"));
-    try {
-      const r = await jpost(`/api/workspaces/${wid}/connect`, body);
-      const n = (r.accepted || []).length;
-      status.replaceChildren(el("div", { class: "ok-msg" }, `Ingested ${n} document(s) into the KB.`));
-      (r.rejected || []).forEach((x) => status.append(el("div", { class: "faint" }, `skipped ${x.name}: ${x.reason}`)));
-    } catch (e) { status.replaceChildren(el("div", { class: "error" }, e.message)); }
-    finally { connectBtn.disabled = false; }
-  });
-  sel.addEventListener("change", renderFields);
-  api("/api/connectors").then((list) => {
-    conns = list;
-    sel.replaceChildren(...list.map((c) => {
-      const mark = c.oauth ? (c.oauth_connected ? " ✓" : "") : (c.needs_cred ? (c.configured ? " ✓" : "") : "");
-      return el("option", { value: c.type }, c.label + mark);
-    }));
-    renderFields();
-  }).catch(() => card.append(el("div", { class: "muted" }, "Connectors unavailable.")));
-  card.append(el("div", { class: "row" }, el("label", { class: "field" }, "Source", sel), el("label", { class: "field" }, "Tags", tags)),
-    authHost, fieldsHost, el("div", { class: "btn-row" }, connectBtn), status);
+  load();
   return card;
+}
+
+function connRow(wid, c, reload) {
+  const pill = el("span", { class: "chip " + (CONN_STATUS[c.status] || "muted") }, el("span", { class: "dot" }), c.status.replace(/_/g, " "));
+  const meta = el("div", { class: "muted" },
+    c.type + (c.last_synced ? ` · last synced ${c.last_synced.replace("T", " ").replace("Z", " UTC")}` : " · never synced"));
+  const busy = el("span", {});
+  const testBtn = el("button", { class: "btn ghost sm", onclick: async () => {
+    busy.replaceChildren(el("span", { class: "spinner" }));
+    try { const r = await api(`/api/workspaces/${wid}/connections/${c.id}/test`, { method: "POST" });
+      toast(r.ok ? "Connection OK — " + r.detail : "Test failed — " + r.detail, r.ok ? "good" : "bad"); reload(); }
+    catch (e) { toast(e.message, "bad"); } finally { busy.replaceChildren(); }
+  } }, "Test");
+  const syncBtn = el("button", { class: "btn sm", onclick: async () => {
+    busy.replaceChildren(el("span", { class: "spinner" }));
+    try { const r = await jpost(`/api/workspaces/${wid}/connections/${c.id}/sync`, {});
+      toast(`Synced — ingested ${r.ingested} document(s)` + ((r.skipped || []).length ? `, skipped ${r.skipped.length}` : "") + ".", "good"); reload(); }
+    catch (e) { toast(e.message, "bad"); } finally { busy.replaceChildren(); }
+  } }, "Sync now");
+  const del = el("button", { class: "btn danger sm", onclick: async () => {
+    if (!confirm(`Remove connection "${c.label}"? Its stored credential is deleted too.`)) return;
+    await api(`/api/workspaces/${wid}/connections/${c.id}`, { method: "DELETE" }); toast("Connection removed."); reload();
+  } }, "Remove");
+  return el("div", { class: "bresult" },
+    el("span", { class: "bfn" }, c.label),
+    el("div", { style: "display:flex;flex-direction:column;gap:2px;flex:1;min-width:140px" }, pill, meta),
+    busy, el("div", { class: "btn-row", style: "margin:0" }, testBtn, syncBtn, del));
+}
+
+// Add-Connection flow: pick a source → per-source form → Test (mandatory) → Save.
+async function addConnection(wid, onDone) {
+  let connectors = [];
+  try { connectors = await api("/api/connectors"); } catch (e) { toast(e.message, "bad"); return; }
+  const m = openModal("Add a connection", [el("p", { class: "muted" }, "Pick where your documents live.")]);
+  const grid = el("div", { style: "display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px" });
+  for (const c of connectors) {
+    grid.append(el("button", { class: "btn", style: "flex-direction:column;height:auto;padding:16px;gap:8px;align-items:flex-start",
+      onclick: () => { m.close(); connForm(wid, c, connectors, onDone); } },
+      el("span", { style: "color:var(--accent)" }, icon("plug")),
+      el("strong", {}, c.label),
+      el("span", { class: "faint" }, c.oauth ? "OAuth sign-in" : (c.needs_cred ? "API token" : "no credential"))));
+  }
+  m.bg.querySelector(".modal-body").append(grid);
+}
+
+function connForm(wid, c, connectors, onDone) {
+  const isOAuth = c.oauth && c.oauth_configured;
+  const oauthNoApp = c.oauth && !c.oauth_configured;
+  const label = el("input", { value: c.label, placeholder: "A name for this connection" });
+  const tags = el("input", { placeholder: "default tags (optional, comma-sep)" });
+  const inputs = {};
+  const fieldEls = (c.fields || []).map((f) => {
+    const inp = el("input", { type: f.type === "number" ? "number" : "text", placeholder: f.label,
+      value: f.name === "depth" ? "1" : f.name === "max_pages" ? "20" : "" });
+    inputs[f.name] = inp;
+    return el("label", { class: "field" }, f.label, inp);
+  });
+  // Secret field only for token-based (non-OAuth) sources that need a credential.
+  let tokenInput = null;
+  if (c.needs_cred && !isOAuth) {
+    tokenInput = el("input", { type: "password", placeholder: "Paste the API token", autocomplete: "off" });
+  }
+  const status = el("div", {});
+  const cfg = () => { const o = {}; for (const [k, v] of Object.entries(inputs)) if (v.value.trim()) o[k] = v.value.trim(); if (csv(tags.value).length) o.tags = csv(tags.value); return o; };
+
+  const testBtn = el("button", { class: "btn" }, "Test connection");
+  const saveBtn = el("button", { class: "btn primary", disabled: "disabled", title: "Test first" }, "Save connection");
+
+  const body = [
+    el("label", { class: "field" }, "Label", label),
+    ...fieldEls,
+    tokenInput ? el("label", { class: "field" }, el("span", {}, "API token ", el("span", { class: "faint" }, "· stored on your server, never shown again")), tokenInput) : null,
+    el("label", { class: "field" }, "Default tags", tags),
+    status,
+  ].filter(Boolean);
+
+  if (isOAuth) {
+    // OAuth source: no secret field — sign in via redirect; the token is exchanged
+    // and stored server-side, then the connection appears in the list.
+    const m = openModal(`Connect ${c.label}`, [
+      el("p", { class: "muted" }, `You'll approve access to ${c.label} in a new tab. Your token is stored on the server — it never touches this page. After connecting, set the target and Sync.`),
+      el("label", { class: "field" }, "Label", label),
+    ], [
+      el("button", { class: "btn ghost", onclick: () => m.close() }, "Cancel"),
+      el("button", { class: "btn primary", onclick: async () => {
+        try {
+          const { authorize_url } = await api(`/api/workspaces/${wid}/connections/${c.oauth_provider}/authorize?label=${encodeURIComponent(label.value || c.label)}`);
+          const w = window.open(authorize_url, "qr-oauth", "width=560,height=720");
+          const finish = () => { m.close(); toast(`${c.label} connected.`, "good"); onDone && onDone(); };
+          const onMsg = (ev) => { if (ev.data === "qr-oauth-done") { cleanup(); finish(); } };
+          const poll = setInterval(async () => {
+            const conns = await api(`/api/workspaces/${wid}/connections`).catch(() => ({ connections: [] }));
+            if ((conns.connections || []).some((x) => x.type === c.oauth_provider && x.status === "connected")) { cleanup(); finish(); }
+            if (w && w.closed) clearInterval(poll);
+          }, 2000);
+          const cleanup = () => { clearInterval(poll); window.removeEventListener("message", onMsg); };
+          window.addEventListener("message", onMsg);
+        } catch (e) { toast(e.message, "bad"); }
+      } }, icon("plug"), `Connect with ${c.label}`),
+    ]);
+    return;
+  }
+
+  const m = openModal(`Configure ${c.label}`, oauthNoApp
+    ? [el("div", { class: "warn-banner" }, `${c.label} OAuth isn't set up on the server. Paste a personal API token instead, or register an OAuth app (client id/secret in .env).`), ...body]
+    : body, [
+    el("button", { class: "btn ghost", onclick: () => m.close() }, "Cancel"),
+    testBtn, saveBtn,
+  ]);
+
+  testBtn.addEventListener("click", async () => {
+    status.replaceChildren(el("span", { class: "muted" }, el("span", { class: "spinner" }), " Testing…"));
+    try {
+      const payload = { type: c.type, config: cfg() };
+      if (tokenInput && tokenInput.value.trim()) payload.token = tokenInput.value.trim();
+      const r = await jpost(`/api/workspaces/${wid}/connections/test`, payload);
+      if (r.ok) { status.replaceChildren(el("div", { class: "ok-msg" }, "✓ " + r.detail)); saveBtn.disabled = false; saveBtn.title = ""; }
+      else { status.replaceChildren(el("div", { class: "error" }, "✗ " + r.detail)); saveBtn.disabled = true; }
+    } catch (e) { status.replaceChildren(el("div", { class: "error" }, e.message)); saveBtn.disabled = true; }
+  });
+  saveBtn.addEventListener("click", async () => {
+    try {
+      const payload = { type: c.type, label: label.value, config: cfg() };
+      if (tokenInput && tokenInput.value.trim()) payload.token = tokenInput.value.trim();
+      await jpost(`/api/workspaces/${wid}/connections`, payload);
+      m.close(); toast(`${c.label} connection added.`, "good"); onDone && onDone();
+    } catch (e) { status.replaceChildren(el("div", { class: "error" }, e.message)); }
+  });
 }
 
 // ---- asset manager (KB / evidence) with drag-drop + tag editor ----

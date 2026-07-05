@@ -397,8 +397,24 @@ qresponder connect onedrive Policies/Security --workspace acme
 ```
 
 Everything goes through the same validation / sandboxing / provenance / tagging as
-manual uploads — no reimplemented ingestion. The web UI has a **Connect a source**
-panel (in Settings) that lists every connector and the fields each needs.
+manual uploads — no reimplemented ingestion.
+
+### Connections manager (in the UI)
+
+**Knowledge Base ▸ Documents & sources** has a Prowler-style **Connections** panel:
+**+ Add Connection → pick a source → fill only that source's fields → Test
+connection (must pass) → Save**, and it lands in a list with a status pill,
+last-synced time, and **Test · Sync now · Remove**. Each source shows only the
+fields it needs (folder → path; website → URL + depth/max-pages; Confluence → space;
+Notion → database; SharePoint/OneDrive → site/folder).
+
+**The credential boundary is strict:** a connection is a *non-secret* record; the
+secret/token lives in a separate server-side store and is **never returned to the
+browser, echoed after you type it, or written to logs**. OAuth sources
+(Notion/Drive/Confluence) use the redirect flow — you approve in a new tab and the
+token is exchanged and stored server-side. Token sources take a field that's POSTed
+once over loopback and stored server-side. The list shows *status only* — never a
+value. Sources fetch **only** when you Test or Sync; answering never touches them.
 
 **The boundary, unchanged:** connector credentials live in `.env` on the server
 and are **never sent to the browser**; connectors run **only** on an explicit
