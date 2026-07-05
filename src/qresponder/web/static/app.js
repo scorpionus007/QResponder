@@ -41,6 +41,12 @@ const ICONS = {
   copy: '<path d="M8 8h11v11H8zM5 16V5h11" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>',
   check: '<path d="M4 12l5 5L20 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>',
   plug: '<path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 01-12 0V8zM12 17v4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
+  home: '<path d="M4 11l8-7 8 7M6 10v9h12v-9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
+  ask: '<path d="M4 5h16v11H9l-4 4V16H4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9 9h6M9 12h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+  insights: '<path d="M4 20V4M4 20h16M8 16v-5M12 16V7M16 16v-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
+  gear: '<path d="M12 15a3 3 0 100-6 3 3 0 000 6z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M19 12a7 7 0 00-.1-1l2-1.6-2-3.4-2.4 1a7 7 0 00-1.7-1L14.4 2h-4l-.4 2.4a7 7 0 00-1.7 1l-2.4-1-2 3.4L5.1 11a7 7 0 000 2l-2 1.6 2 3.4 2.4-1a7 7 0 001.7 1l.4 2.4h4l.4-2.4a7 7 0 001.7-1l2.4 1 2-3.4-2-1.6a7 7 0 00.1-1z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>',
+  shield: '<path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
+  clock: '<circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 8v4l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
 };
 function icon(name) {
   const wrap = document.createElement("span");
@@ -74,7 +80,7 @@ function openModal(titleText, bodyNodes, footNodes) {
   return { bg, close };
 }
 
-const S = { workspaces: [], current: null, status: {}, doctor: null, page: "upload", recent: {} };
+const S = { workspaces: [], current: null, status: {}, doctor: null, page: "home", recent: {} };
 const root = () => $("app");
 
 // ---- bootstrap ----
@@ -85,10 +91,9 @@ async function boot() {
   if (!S.workspaces.length) { hideChrome(); return showWizard(); }
   S.current = S.current || S.workspaces[0].id;
   renderSwitcher();
-  renderNav();
   go(S.page);
 }
-function hideChrome() { $("nav").classList.add("hidden"); $("ws-switcher").classList.add("hidden"); }
+function hideChrome() { $("rail").classList.add("hidden"); $("ws-switcher").classList.add("hidden"); }
 async function refreshStatus() {
   try {
     S.status = await api("/api/status");
@@ -103,19 +108,37 @@ async function refreshDoctor() {
   try { S.doctor = await api("/api/doctor"); } catch (_) { S.doctor = { ok: false }; }
 }
 async function loadWorkspaces() { S.workspaces = await api("/api/workspaces"); }
+// Gating helper: is there anything to ground answers in? (KB docs or approved answers)
+async function kbIsEmpty(wid) {
+  try { const h = await api(`/api/workspaces/${wid}/home`); return !(h.kb_docs > 0 || h.qa_count > 0); }
+  catch (_) { return false; }  // on error, don't block — let the normal flow surface it
+}
 
-function renderNav() {
-  const nav = $("nav");
-  nav.classList.remove("hidden");
-  for (const a of nav.querySelectorAll(".nav-item")) {
-    a.classList.toggle("active", a.dataset.page === S.page);
-    a.onclick = () => go(a.dataset.page);
-  }
+const RAIL = [
+  { page: "home", label: "Home", icon: "home" },
+  { page: "upload", label: "Upload", icon: "upload" },
+  { page: "ask", label: "Ask", icon: "ask" },
+  { page: "kb", label: "Knowledge Base", icon: "book" },
+  { page: "connections", label: "Connections", icon: "plug" },
+  { page: "insights", label: "Insights", icon: "insights" },
+  { page: "settings", label: "Settings", icon: "gear" },
+];
+function renderRail() {
+  const rail = $("rail");
+  rail.classList.remove("hidden");
+  $("rail").querySelector(".rail-brand").onclick = () => go("home");
+  const host = $("rail-items");
+  host.replaceChildren(...RAIL.map((r) => {
+    const b = el("button", { class: "rail-item" + (S.page === r.page ? " active" : ""), "aria-label": r.label,
+      "aria-current": S.page === r.page ? "page" : null, onclick: () => go(r.page) },
+      icon(r.icon), el("span", { class: "tip" }, r.label));
+    return b;
+  }));
 }
 function renderSwitcher() {
   const sw = $("ws-switcher");
   sw.classList.remove("hidden");
-  const sel = el("select", { onchange: (e) => { if (e.target.value === "__new") return showWizard(); S.current = e.target.value; go(S.page); } });
+  const sel = el("select", { "aria-label": "Workspace", onchange: (e) => { if (e.target.value === "__new") return showWizard(); S.current = e.target.value; go(S.page); } });
   for (const w of S.workspaces) sel.append(el("option", { value: w.id, ...(w.id === S.current ? { selected: "selected" } : {}) }, w.name));
   sel.append(el("option", { value: "__new" }, "+ New workspace"));
   sw.replaceChildren(sel);
@@ -123,23 +146,198 @@ function renderSwitcher() {
 
 function go(page) {
   S.page = page;
-  renderNav();
+  renderRail();
   const view = el("div", {});
   root().replaceChildren(view);
   const wid = S.current;
-  if (page === "kb") kbPage(view, wid);
+  if (page === "upload") uploadPage(view, wid);
   else if (page === "ask") askPage(view, wid);
+  else if (page === "kb") kbPage(view, wid);
+  else if (page === "connections") connectionsPage(view, wid);
+  else if (page === "insights") insightsPage(view, wid);
   else if (page === "settings") settingsPage(view, wid);
-  else uploadPage(view, wid);
+  else homePage(view, wid);
+}
+
+// ============================================================================
+// Home — first-run dashboard: local-first assurance, hero upload, setup checklist.
+// ============================================================================
+async function homePage(view, wid) {
+  view.append(el("div", { class: "page-head" }, el("h1", {}, "Welcome to QRESPONDER"),
+    el("div", { class: "sub" }, "Draft grounded, cited answers to security questionnaires — entirely on your own machine.")));
+
+  // Local-first assurance (our real story, not a cloud-compliance claim).
+  view.append(el("div", { class: "assure" }, el("span", { class: "ac" }, icon("shield")),
+    el("div", { class: "body" }, el("strong", {}, "Your documents never leave this machine. "),
+      "No cloud, no account, nothing sent anywhere — answering runs entirely on your own infrastructure with a local model. ",
+      el("a", { href: "#", onclick: (e) => { e.preventDefault(); dataNote(); } }, "How your data is handled"))));
+
+  const gridL = el("div", {});
+  const gridR = el("div", {});
+  view.append(el("div", { class: "home-grid" }, gridL, gridR));
+
+  // Hero upload zone → adds a document to the KB (the primary first step).
+  const hero = el("div", { class: "card" }, el("h2", {}, "Add a document to your knowledge base"),
+    el("p", { class: "muted" }, "This is what your answers are grounded in and cited from. Add a policy, SOC 2 summary, or architecture doc."));
+  const heroDrop = el("div", { class: "dropzone hero-drop", role: "button", tabindex: "0", "aria-label": "Add a knowledge base document" },
+    el("div", { class: "dz-glyph" }, icon("upload")),
+    el("div", {}, el("strong", {}, "Drop a document here"), " or click to choose"),
+    el("div", { class: "dz-hint" }, "PDF · DOCX · MD · TXT · CSV · XLSX · HTML — added locally"));
+  const heroInput = el("input", { type: "file", multiple: "multiple", class: "hidden" });
+  const heroMsg = el("div", {});
+  const doUpload = async (files) => {
+    if (!files || !files.length) return;
+    const fd = new FormData(); for (const f of files) fd.append("files", f);
+    heroMsg.replaceChildren(el("span", { class: "muted" }, el("span", { class: "spinner" }), " Adding…"));
+    try { const r = await api(`/api/workspaces/${wid}/kb`, { method: "POST", body: fd });
+      heroMsg.replaceChildren(el("div", { class: "ok-msg" }, `Added ${(r.accepted || []).length} document(s) to your KB.`));
+      homePage(view.replaceChildren() || view, wid);
+    } catch (e) { heroMsg.replaceChildren(el("div", { class: "error" }, e.message)); }
+  };
+  heroDrop.addEventListener("click", () => heroInput.click());
+  heroDrop.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); heroInput.click(); } });
+  heroDrop.addEventListener("dragover", (e) => { e.preventDefault(); heroDrop.classList.add("drag"); });
+  heroDrop.addEventListener("dragleave", () => heroDrop.classList.remove("drag"));
+  heroDrop.addEventListener("drop", (e) => { e.preventDefault(); heroDrop.classList.remove("drag"); doUpload(e.dataTransfer.files); });
+  heroInput.addEventListener("change", () => doUpload(heroInput.files));
+  hero.append(heroDrop, heroInput, heroMsg);
+  gridL.append(hero);
+
+  // Setup checklist + quick tiles from real state.
+  const setupCard = el("div", { class: "card" }, skeleton("sk-row", 3));
+  gridR.append(setupCard);
+  let h;
+  try { h = await api(`/api/workspaces/${wid}/home`); } catch (_) { setupCard.replaceChildren(el("div", { class: "muted" }, "—")); return; }
+
+  const pct = Math.round(100 * h.setup.done / h.setup.total);
+  const ring = el("div", { class: "ring", style: `--p:${pct}` }, el("b", {}, `${h.setup.done}/${h.setup.total}`));
+  const links = { document: () => go("kb"), ask: () => go("ask"), automate: () => go("upload") };
+  const cta = { document: "Add", ask: "Ask", automate: "Upload" };
+  const items = h.setup.steps.map((s) => el("div", { class: "setup-item" + (s.done ? " done" : "") },
+    el("span", { class: "setup-check" }, icon("check")),
+    el("span", { class: "st" }, s.label),
+    s.done ? el("span", { class: "chip done" }, "done")
+           : el("button", { class: "btn primary sm", onclick: links[s.key] }, cta[s.key])));
+  setupCard.replaceChildren(
+    el("div", { class: "ring-wrap", style: "margin-bottom:8px" }, ring,
+      el("div", {}, el("h2", { style: "margin:0" }, "Setup progress"),
+        el("div", { class: "muted" }, h.setup.done === h.setup.total ? "You're all set." : "Complete these steps to get going."))),
+    ...items);
+
+  // Quick tiles.
+  gridR.append(el("div", { class: "card" }, el("h2", {}, "At a glance"),
+    el("button", { class: "quick-tile", onclick: () => go("kb") }, el("span", { class: "qi" }, icon("book")),
+      el("div", {}, el("div", { class: "qv" }, `${h.qa_count}`), el("div", { class: "ql" }, `approved answers · ${h.categories.length} categories`))),
+    el("button", { class: "quick-tile", onclick: () => go("upload") }, el("span", { class: "qi" }, icon("clock")),
+      el("div", {}, el("div", { class: "qv" }, `${h.n_runs}`), el("div", { class: "ql" }, "questionnaire runs"))),
+    el("button", { class: "quick-tile", onclick: () => go("connections") }, el("span", { class: "qi" }, icon("plug")),
+      el("div", {}, el("div", { class: "qv" }, `${h.kb_docs}`), el("div", { class: "ql" }, "KB documents · connect a source")))));
+}
+
+function dataNote() {
+  openModal("How your data is handled", [
+    el("p", {}, el("strong", {}, "Local-first by design.")),
+    el("ul", { class: "muted", style: "margin:0;padding-left:18px;line-height:1.9" },
+      el("li", {}, "The app binds 127.0.0.1 — it isn't exposed to any network."),
+      el("li", {}, "With a local model (Ollama/vLLM/LM Studio) + local embeddings, answering makes ", el("strong", {}, "zero external calls"), "."),
+      el("li", {}, "Your provider API key (if you use a cloud model) stays in .env on the server — never sent to this page."),
+      el("li", {}, "Connectors fetch only when you explicitly Sync — never during answering."),
+      el("li", {}, "No telemetry, no account, no data leaves the host.")),
+  ]);
+}
+
+// ============================================================================
+// Connections page (Phase-14 manager as its own screen).
+// ============================================================================
+function connectionsPage(view, wid) {
+  view.append(el("div", { class: "page-head" }, el("h1", {}, "Connections"),
+    el("div", { class: "sub" }, "Connect the places your documents live. Credentials stay on your server; sources fetch only when you Sync.")));
+  view.append(connectionsPanel(wid));
+}
+
+// ============================================================================
+// Insights — knowledge-gap report (what the KB can't yet answer).
+// ============================================================================
+async function insightsPage(view, wid) {
+  view.append(el("div", { class: "page-head" }, el("h1", {}, "KB Insights"),
+    el("div", { class: "sub" }, "What your knowledge base can't yet answer — the gaps to grow next. Built from your own run history, read-only.")));
+  const host = el("div", {});
+  view.append(el("div", { class: "statgrid" }, skeleton("sk-tile", 1).firstChild, skeleton("sk-tile", 1).firstChild, skeleton("sk-tile", 1).firstChild), host);
+  let r;
+  try { r = await api(`/api/workspaces/${wid}/insights`); } catch (e) { host.replaceChildren(el("div", { class: "error" }, e.message)); return; }
+  view.replaceChildren(view.firstChild);  // keep page-head, drop skeleton grid
+
+  if (!r.n_runs) {
+    view.append(emptyState("insights", "No runs to analyze yet",
+      "Process a questionnaire and the questions your KB couldn't answer will surface here — grouped by topic, with what to add next.",
+      el("button", { class: "btn primary", onclick: () => go("upload") }, "Automate a questionnaire")));
+    return;
+  }
+
+  const stat = (v, l, cls) => el("div", { class: "statcard" }, el("div", { class: "v" + (cls || "") }, String(v)), el("div", { class: "l" }, l));
+  view.append(el("div", { class: "statgrid" },
+    stat(r.n_runs, "runs analyzed"), stat(r.total_questions, "questions"),
+    stat(Math.round(r.abstain_rate * 100) + "%", "abstained (gap rate)", " grad"),
+    stat(r.flagged, "flagged total")));
+
+  // Gaps by reason.
+  const gapsCard = el("div", { class: "card" }, el("h2", {}, "What the KB couldn't answer"),
+    el("p", { class: "muted" }, r.note));
+  const maxc = Math.max(1, ...r.gaps_by_reason.map((g) => g.count));
+  for (const g of r.gaps_by_reason) gapsCard.append(el("div", { class: "gap-row" },
+    el("div", { class: "gk" }, el("b", {}, g.reason.replace(/_/g, " ")),
+      g.examples.length ? el("div", { class: "ex truncate" }, "e.g. " + g.examples[0]) : null),
+    el("div", { style: "flex:1;max-width:200px" }, el("div", { class: "gap-bar", style: `width:${Math.round(100 * g.count / maxc)}%` })),
+    el("div", { class: "gc" }, String(g.count))));
+  view.append(gapsCard);
+
+  // Gap themes.
+  if (r.gap_themes.length) {
+    const themes = el("div", { class: "card" }, el("h2", {}, "Recurring topics with gaps"),
+      el("p", { class: "muted" }, "Add knowledge-base content on these themes to close the most questions."));
+    for (const t of r.gap_themes) themes.append(el("div", { class: "gap-row" },
+      el("div", { class: "gk" }, el("b", {}, t.theme), t.examples.length ? el("div", { class: "ex truncate" }, "e.g. " + t.examples[0]) : null),
+      el("div", { class: "gc" }, String(t.count))));
+    view.append(themes);
+  }
+
+  // Abstain-rate trend (sparkline) + reused Tier-1.
+  const side = el("div", { class: "home-grid" });
+  if (r.series.length) {
+    const mx = Math.max(1, ...r.series.map((s) => s.abstain_rate));
+    const spark = el("div", { class: "spark" }, ...r.series.map((s) =>
+      el("div", { class: "bar", style: `height:${Math.max(6, Math.round(100 * s.abstain_rate / mx))}%`, title: `${s.source_file}: ${Math.round(s.abstain_rate * 100)}% abstained` })));
+    side.append(el("div", { class: "card" }, el("h2", {}, "Abstain rate over runs"),
+      el("p", { class: "muted" }, "Trending down means your KB is covering more — oldest (left) to newest (right)."), spark));
+  }
+  if (r.reused_tier1.length) {
+    const reused = el("div", { class: "card" }, el("h2", {}, "Hardest-working answers"),
+      el("p", { class: "muted" }, "Approved answers reused most across your runs."));
+    for (const u of r.reused_tier1) reused.append(el("div", { class: "gap-row" },
+      el("div", { class: "gk truncate" }, u.answer), el("div", { class: "gc" }, "×" + u.count)));
+    side.append(reused);
+  }
+  view.append(side);
+
+  view.append(el("div", { class: "btn-row" },
+    el("a", { class: "btn ghost sm", href: `/api/workspaces/${wid}/insights/export?fmt=csv`, download: "kb_insights.csv" }, "Export CSV"),
+    el("a", { class: "btn ghost sm", href: `/api/workspaces/${wid}/insights/export?fmt=json`, download: "kb_insights.json" }, "Export JSON")));
 }
 
 // ============================================================================
 // PART C/D/E — Upload screen + live processing + per-file results
 // ============================================================================
 const UPLOAD_EXTS = [".docx", ".pdf", ".xlsx", ".xlsm", ".csv"];
-function uploadPage(view, wid) {
+async function uploadPage(view, wid) {
   view.append(el("div", { class: "page-head" }, el("h1", {}, "Upload questionnaires"),
     el("div", { class: "sub" }, "Drop your files and let QRESPONDER draft grounded, cited answers — every answer reviewable, nothing submitted.")));
+  // Gate: answers must be grounded, so require a non-empty KB first.
+  if (await kbIsEmpty(wid)) {
+    view.append(emptyState("book", "Add a document first",
+      "Answers are grounded in — and cited from — your knowledge base. Add at least one document so a questionnaire has something to draw on.",
+      el("button", { class: "btn primary", onclick: () => go("kb") }, "Go to your Knowledge Base")));
+    return;
+  }
 
   // --- model + preset controls ---
   const provSel = el("select", {}, el("option", { value: "" }, `default (${S.status.provider})`));
@@ -353,9 +551,15 @@ async function renderBatchResults(host, batchId) {
 // ============================================================================
 const CONF_CLASS = { high: "high", medium: "medium", low: "low" };
 
-function askPage(view, wid) {
+async function askPage(view, wid) {
   view.append(el("div", { class: "page-head" }, el("h1", {}, "Ask"),
-    el("div", { class: "sub" }, "Ask one question and get a grounded, cited answer — the exact same path as a questionnaire. If your KB doesn't support it, it says so instead of guessing.")));
+    el("div", { class: "sub" }, "Ask anything about your security posture — answers cite your documents. If your KB doesn't support it, it says so instead of guessing.")));
+  if (await kbIsEmpty(wid)) {
+    view.append(emptyState("ask", "Nothing to ground an answer in yet",
+      "Ask cites your own documents. Add something to your knowledge base first, then ask anything about your security posture.",
+      el("button", { class: "btn primary", onclick: () => go("kb") }, "Go to your Knowledge Base")));
+    return;
+  }
 
   const provSel = el("select", {}, el("option", { value: "" }, `default (${S.status.provider})`));
   const modelSel = el("select", {}, el("option", { value: "" }, "default model"));
@@ -504,9 +708,11 @@ function kbPage(view, wid) {
 // --- Tab: Documents & sources (upload files + connect Confluence/Notion/etc.) ---
 function documentsTab(host, wid) {
   host.append(el("div", { class: "card" }, el("h2", {}, "Knowledge base documents"),
-    el("p", { class: "muted" }, "Cited when answering. Drop files, or connect a source below. Tag docs to scope which answer which questionnaire."),
+    el("p", { class: "muted" }, "Cited when answering. Drop files here, or pull from a source in Connections. Tag docs to scope which answer which questionnaire."),
     assetManager(wid, "kb")));
-  host.append(connectionsPanel(wid));
+  host.append(el("div", { class: "card" }, el("h2", {}, "Connect a source"),
+    el("p", { class: "muted" }, "Pull documents in from Confluence, Google Drive, Notion, SharePoint, OneDrive, a folder, or a URL."),
+    el("div", { class: "btn-row" }, el("button", { class: "btn", onclick: () => go("connections") }, icon("plug"), "Manage Connections"))));
 }
 
 // --- Tab 1: Entries ---
@@ -1066,7 +1272,7 @@ const STEP = [
   (body, st) => {
     body.append(el("p", { class: "why" }, "You're set. Upload a questionnaire and let QRESPONDER draft grounded, cited answers — you review every one."));
     body.append(el("div", { class: "btn-row" }, el("button", { class: "btn primary", onclick: async () => {
-      S.current = st.wid; await loadWorkspaces(); renderSwitcher(); renderNav(); go("upload");
+      S.current = st.wid; await loadWorkspaces(); renderSwitcher(); go("home");
     } }, "Go to upload →")));
   },
 ];

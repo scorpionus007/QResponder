@@ -9,28 +9,26 @@
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <header class="topnav">
-    <div class="nav-left">
-      <div class="logo" aria-hidden="true"></div>
-      <span class="wordmark">QRESPONDER</span>
-      <nav id="nav" class="nav-items hidden">
-        <a class="nav-item" data-page="upload">Upload</a>
-        <a class="nav-item" data-page="kb">Knowledge Base</a>
-        <a class="nav-item" data-page="ask">Ask</a>
-        <a class="nav-item" data-page="settings">Settings</a>
-      </nav>
+  <div class="shell">
+    <nav id="rail" class="rail hidden" aria-label="Primary">
+      <a class="rail-brand" title="QRESPONDER"><span class="logo" aria-hidden="true"></span></a>
+      <div id="rail-items" class="rail-items"></div>
+    </nav>
+    <div class="main">
+      <header class="topbar">
+        <div id="ws-switcher" class="ws-switcher hidden"></div>
+        <div class="topbar-right">
+          <div id="model-status" class="model-status" title="Active model — server-side; your API key never reaches this page">
+            <span class="ms-dot"></span><span class="ms-text">—</span>
+          </div>
+        </div>
+      </header>
+      <main id="app"><div class="loading"><span class="spinner"></span> Loading…</div></main>
+      <footer class="appfoot">
+        Local-first · binds 127.0.0.1 · no login · no telemetry · your data never leaves this machine.
+      </footer>
     </div>
-    <div class="nav-right">
-      <div id="ws-switcher" class="ws-switcher hidden"></div>
-      <div id="model-status" class="model-status" title="Active model — server-side; your API key never reaches this page">
-        <span class="ms-dot"></span><span class="ms-text">—</span>
-      </div>
-    </div>
-  </header>
-  <main id="app"><div class="loading"><span class="spinner"></span> Loading…</div></main>
-  <footer class="appfoot">
-    Local-first · binds 127.0.0.1 · no login · no telemetry · your API key stays in <code>.env</code>, never in this page.
-  </footer>
+  </div>
   <script src="/app.js"></script>
 </body>
 </html>

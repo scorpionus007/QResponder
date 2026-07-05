@@ -70,6 +70,30 @@ the wizard's *Run locally (private, no key)* path is the zero-config default.
 > dashboard screens → `docs/wizard.png`, `docs/kb.png`, `docs/upload.png`,
 > `docs/processing.png`, `docs/results.png`. (Not committed — per-environment.)_
 
+### Home, the icon rail, and KB Insights (Phase 15)
+
+A slim **left icon rail** (Home · Upload · Ask · Knowledge Base · Connections ·
+Insights · Settings) keeps navigation out of the way; the active-model pill and
+workspace switcher sit in the content top bar.
+
+**Home** is a real first-run front door: a local-first assurance banner (*your
+documents never leave this machine — no cloud, no account, answering runs on your
+own infrastructure*), a hero drop-zone to add your first KB document, and a **Setup
+checklist** with a progress ring that reflects *actual* state — add a document, ask
+your first question, automate a questionnaire — plus quick tiles for KB size and
+recent runs.
+
+**Gated by grounding, honestly.** Upload and Ask require a non-empty knowledge base
+and tell you why ("answers are grounded in — and cited from — your documents"), with
+a button straight to the KB. The gate is the point, not an obstacle.
+
+**KB Insights** (`qresponder kb-insights --workspace <id>`, or the **Insights**
+screen) is a knowledge-*gap* report built from your own run history: it surfaces
+**what your KB can't yet answer** — the flagged/abstained questions grouped by reason
+and by keyword theme (with example questions), the abstain-rate trend across runs,
+and the approved answers doing the most work. It's framed as *"add content here"* and
+exports to CSV/JSON. Local read only — no DB, no telemetry.
+
 ### The dashboard (Phase 11)
 
 A polished, dark **command-center** UI with a persistent top nav — **Upload ·
@@ -581,6 +605,7 @@ qresponder import-answers --csv flagged.csv --qa qa.yaml [--run ./out]  # filled
 qresponder kb-check --qa qa.yaml [--merge-duplicates]   # scan the library for contradictions/dups
 qresponder ask "Do you encrypt at rest?" --workspace acme [--provider P --model M] [--json]
 qresponder stats --workspace acme                        # local completion/auto-answer analytics
+qresponder kb-insights --workspace acme                  # knowledge-gap report: what your KB can't yet answer
 qresponder connect folder ./docs --workspace acme        # ingest a folder (explicit; never auto)
 qresponder connect website https://example.com --workspace acme --depth 1 --max-pages 20
 qresponder connect confluence|notion|sharepoint|onedrive <target> --workspace acme  # SaaS (creds in .env)

@@ -7,6 +7,21 @@ versioning.
 ## [Unreleased]
 
 ### Added
+- **Home dashboard, icon-rail nav, and KB Insights (Phase 15; front-end + a small
+  additive report).** A left **icon rail** (Home · Upload · Ask · Knowledge Base ·
+  Connections · Insights · Settings — aria-labelled, tooltip, keyboard-navigable)
+  replaces the top text nav; the model-status pill + workspace switcher move to a
+  content top bar. A real first-run **Home** (`GET …/home`): a local-first assurance
+  banner (our actual guarantee — *your documents never leave this machine*), a hero
+  KB-upload zone, a **Setup checklist** with a progress ring that reflects real state
+  (KB non-empty · asked · ≥1 run), and quick tiles. **Gated empty states** — Upload
+  and Ask require a non-empty KB and say why ("answers must be grounded"), with the
+  next action. New **KB Insights** knowledge-gap report (`qresponder kb-insights`,
+  `GET …/insights`, CSV/JSON export): from the workspace's run history it surfaces
+  what the KB couldn't answer — gaps by reason with example questions, keyword gap
+  themes, the per-run abstain-rate trend, and the most-reused Tier-1 answers. Local
+  read only, no DB/telemetry; Phase-13 tokens throughout. Explicitly NOT built: an
+  external Answer Hub, per-user/messaging analytics, SSO/user-management/billing.
 - **In-UI Connections manager (Prowler-style).** Configure every source from the
   browser — **Knowledge Base ▸ Documents & sources**: click **+ Add Connection**,
   pick the source, fill only the fields it needs, **Test connection** (must pass
