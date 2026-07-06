@@ -70,6 +70,11 @@ class Config(BaseModel):
     microsoft_client_secret: str = ""
     oauth_redirect_base: str = "http://127.0.0.1:8000"
 
+    # OPTIONAL, opt-in access control for networked/hosted mode (Phase 16). When set,
+    # the web app + API require this token; UNSET (default) = no auth, for the local
+    # 127.0.0.1 experience. See docs/hosting.md. Never sent by the app to a third party.
+    auth_token: str = ""
+
     # Local / generic OpenAI-compatible path (Ollama / vLLM / LM Studio / OpenRouter)
     llm_base_url: str = "http://localhost:11434/v1"
     llm_api_key: str = "ollama"
@@ -178,6 +183,7 @@ _ENV_MAP = {
     "MICROSOFT_CLIENT_ID": "microsoft_client_id",
     "MICROSOFT_CLIENT_SECRET": "microsoft_client_secret",
     "OAUTH_REDIRECT_BASE": "oauth_redirect_base",
+    "QRESPONDER_AUTH_TOKEN": "auth_token",
     "LLM_BASE_URL": "llm_base_url",
     "LLM_API_KEY": "llm_api_key",
     "LLM_MODEL": "llm_model",

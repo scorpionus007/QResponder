@@ -677,12 +677,16 @@ def serve(
         )
         raise typer.Exit(code=1)
 
-    if host not in ("127.0.0.1", "localhost"):
+    if host not in ("127.0.0.1", "localhost") and not cfg.auth_token:
         typer.secho(
-            f"WARNING: binding {host} exposes the UI beyond localhost. It has NO AUTH "
-            "and handles your security posture — put auth/a reverse proxy in front first.",
-            fg=typer.colors.YELLOW,
+            f"⚠ WARNING: binding {host} exposes the UI beyond localhost with NO AUTH. "
+            "It holds your entire knowledge base. Set QRESPONDER_AUTH_TOKEN and/or put a "
+            "reverse proxy with TLS + auth in front first — see docs/hosting.md.",
+            fg=typer.colors.RED, bold=True,
         )
+    elif host not in ("127.0.0.1", "localhost"):
+        typer.secho(f"Binding {host} with QRESPONDER_AUTH_TOKEN set (requests must carry the token). "
+                    "Still recommend a reverse proxy + TLS — see docs/hosting.md.", fg=typer.colors.YELLOW)
     model = cfg.anthropic_model if cfg.llm_provider == "anthropic" else cfg.llm_model
     typer.secho(f"QRESPONDER review UI — provider: {cfg.llm_provider} ({model})", fg=typer.colors.GREEN)
     typer.echo(f"  http://{host}:{port}  (keys stay server-side; nothing leaves this host)")

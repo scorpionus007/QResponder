@@ -115,6 +115,33 @@ def _persist(job: _Job) -> None:
 def create_app(config: Config | None = None, model_fetch=None) -> FastAPI:
     config = config or load_config()
     app = FastAPI(title="QRESPONDER review UI")
+
+    # OPTIONAL, opt-in access control (Phase 16). When QRESPONDER_AUTH_TOKEN is set,
+    # every request must carry it (Bearer header, ?token= once → cookie). UNSET =
+    # no auth, the local 127.0.0.1 default. The token is compared in constant time.
+    if config.auth_token:
+        import secrets as _secrets
+
+        from starlette.responses import JSONResponse, Response
+
+        _TOKEN = config.auth_token
+
+        @app.middleware("http")
+        async def _require_token(request, call_next):
+            supplied = ""
+            auth = request.headers.get("authorization", "")
+            if auth.lower().startswith("bearer "):
+                supplied = auth[7:].strip()
+            supplied = supplied or request.cookies.get("qr_auth", "") or request.query_params.get("token", "")
+            if not _secrets.compare_digest(supplied, _TOKEN):
+                if request.url.path.startswith("/api/"):
+                    return JSONResponse({"detail": "unauthorized"}, status_code=401)
+                return Response("Unauthorized. Append ?token=<your token> once to sign in.", status_code=401)
+            resp = await call_next(request)
+            if request.query_params.get("token") == _TOKEN:  # first load → persist a cookie
+                resp.set_cookie("qr_auth", _TOKEN, httponly=True, samesite="strict")
+            return resp
+
     jobs: dict[str, _Job] = {}
     app.state.jobs = jobs  # test seam
     resolved: dict[tuple, str] = {}  # (wid, question) -> answer, for idempotent resolve
