@@ -7,6 +7,33 @@ versioning.
 ## [Unreleased]
 
 ### Added
+- **Open-source & run-anywhere (Phase 16).** One-command Docker: a multi-stage
+  `Dockerfile` (non-root, web+retrieval, `HEALTHCHECK` on a new always-open `/healthz`)
+  + `docker-compose.yml` (`docker compose up -d` → `http://localhost:8000`, persistent
+  workspaces volume, host-loopback port, optional bundled-Ollama `local` profile). CI
+  now builds the image and runs a **container smoke test**; a `release.yml` builds +
+  pushes a **multi-arch (amd64+arm64) image to GHCR** and cuts a GitHub Release on a
+  tag. Governance/docs: `SECURITY.md`, `CODE_OF_CONDUCT.md`, issue/PR templates,
+  `ARCHITECTURE.md`, and a `docs/` set (install, usage, connectors + **live-verify
+  checklist**, security/privacy, hosting); README overhauled (hero, badges, quickstart).
+- **Optional hosted auth (Phase 16).** `QRESPONDER_AUTH_TOKEN` — when set, the app +
+  API require it (Bearer header or `?token=` → httponly cookie, constant-time compare);
+  **unset by default** so the local `127.0.0.1` experience is unchanged. The `serve`
+  CLI prints a loud warning when binding non-loopback without it. `docs/hosting.md`
+  covers reverse proxy + TLS.
+
+### Fixed
+- **All connectors hardened to real APIs (Phase 16).** Notion (`api.notion.com/v1`,
+  `Notion-Version`, `start_cursor`), Google Drive (Drive v3 `files.list` pageToken +
+  export/media), SharePoint/OneDrive (Microsoft Graph, `@odata.nextLink`) now run their
+  real pagination/download against an **injectable HTTP fetcher**, so the wiring is
+  exercised offline with real-API-shaped mocks. Added **Microsoft OAuth** (SharePoint +
+  OneDrive), **token auto-refresh** on a 401 during sync, and `test_connection()` on
+  every connector. Filenames from connectors now preserve real extensions.
+- **`typeshape.coerce_to_options`** uses a word-boundary match so a short option ("No")
+  no longer maps inside a longer word ("know"/"not"). Grounding-safe as before.
+
+### Added
 - **Home dashboard, icon-rail nav, and KB Insights (Phase 15; front-end + a small
   additive report).** A left **icon rail** (Home · Upload · Ask · Knowledge Base ·
   Connections · Insights · Settings — aria-labelled, tooltip, keyboard-navigable)

@@ -1,55 +1,95 @@
 # QRESPONDER
 
-**Self-hostable, bring-your-own-model security-questionnaire automation.**
+**Local-first, self-hostable, open-source security-questionnaire automation — your data never leaves the host.**
 
-QRESPONDER **runs on your own infrastructure, proves its own accuracy, refuses to
-fabricate, and hands you an audit trail** — it's not an "AI questionnaire filler."
-It drafts grounded, cited answers to vendor security questionnaires (SIG, CAIQ,
-VSAQ, custom Excel/Word/PDF) from *your own* knowledge base, treats document
-content as data (never instructions), and routes everything uncertain to a human.
-It runs entirely on your infrastructure with any model: a local Llama/Qwen via
-Ollama/vLLM, or a cloud API. A security tool that demands you upload your security
-posture to someone's cloud is a contradiction — so QRESPONDER doesn't.
+[![CI](https://github.com/scorpionus007/QResponder-GRC/actions/workflows/ci.yml/badge.svg)](https://github.com/scorpionus007/QResponder-GRC/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/scorpionus007/QResponder-GRC?sort=semver)](https://github.com/scorpionus007/QResponder-GRC/releases)
+[![GHCR image](https://img.shields.io/badge/ghcr.io-qresponder-informational)](https://github.com/scorpionus007/QResponder-GRC/pkgs/container/qresponder)
+[![Stars](https://img.shields.io/github/stars/scorpionus007/QResponder-GRC?style=social)](https://github.com/scorpionus007/QResponder-GRC/stargazers)
 
-> **Status:** feature-complete engine (Phases 0–3). Ingest → AI-extract →
-> Tier-1 library → retrieval/in-context answer → faithfulness-verify →
-> cross-source conflict check → confidence → NEEDS_REVIEW → output + review.
-> Phase 1: hybrid retrieval (BM25 + dense + RRF) → cross-encoder rerank,
-> faithfulness/citation verification, eval harness. Phase 2: ambiguity surfacing,
-> attachment resolution, format-perfect write-back, approve-back flywheel.
-> Phase 3: cross-source conflict detection + launch hardening (golden eval, CI,
-> demo). Phase 4: a local web review UI (`qresponder serve`) where every
-> accept/edit trains the Answer Library. Phase 5: a guided setup wizard +
-> multi-workspace asset management — configure everything (model check, KB,
-> evidence, answers, settings) from the browser; only the API key stays in
-> `.env`. Two-adapter BYOM, `doctor` preflight, CLI, Docker, **91 tests, all
-> offline**.
+QRESPONDER drafts **grounded, cited** answers to vendor security questionnaires
+(SIG / CAIQ / VSAQ / custom Excel·Word·PDF) from **your own** knowledge base. It
+**abstains instead of guessing**, hands you an audit trail, and runs on **any model**
+— a local Llama/Qwen via Ollama/vLLM, or a cloud API. A security tool that demands you
+upload your security posture to someone's cloud is a contradiction, so this one runs
+entirely on your infrastructure.
+
+> _(screenshot/GIF of the dashboard — Home · Upload · Ask · Insights — goes here:
+> `docs/dashboard.png`)_
+
+## Quickstart
+
+**Docker (one command):**
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/scorpionus007/QResponder-GRC/main/docker-compose.yml
+curl -fsSLO https://raw.githubusercontent.com/scorpionus007/QResponder-GRC/main/.env.example
+mv .env.example .env        # optional — a local model needs no key
+docker compose up -d        # → open http://localhost:8000
+```
+
+**pip / pipx:**
+
+```bash
+pipx install "qresponder[web,retrieval]"
+qresponder serve            # → http://127.0.0.1:8000
+```
+
+Fully local, zero cloud: `docker compose --profile local up -d` bundles Ollama.
+More: **[docs/install.md](docs/install.md)** · **[docs/usage.md](docs/usage.md)**.
 
 ## Why it's honest by construction
 
-- **Grounded:** answers come *only* from supplied KB context. Unsupported →
-  `NEEDS_REVIEW` with `missing_info`. It never fabricates certifications,
-  controls, audit results, or compliance status.
-- **Cited:** every `ANSWERED` result carries at least one citation (source + snippet).
-- **Human-gated:** output is a *draft*. There is no submit step.
-- **Local-first privacy:** the fully-local path makes zero external network calls.
-  No telemetry, ever. KB contents and keys are never logged.
+- **Grounded** — answers come *only* from your KB context; unsupported → `NEEDS_REVIEW`.
+  It never fabricates certifications, controls, or compliance status.
+- **Cited** — every answered result carries at least one citation (source + snippet),
+  verified by a faithfulness check.
+- **Human-gated** — output is a *draft*; there is no submit step, and each accept
+  trains your answer library.
+- **Local-first** — with a local model + local embeddings, answering makes **zero
+  external calls**. No telemetry. Keys and connector tokens stay server-side, never in
+  the browser. See **[docs/privacy.md](docs/privacy.md)**.
 
-## 60-second quickstart
+## Features
 
-```bash
-pip install -e ".[anthropic]"      # or ".[openai]" for the OpenAI-compatible path
-cp .env.example .env               # then edit .env
-qresponder doctor                  # verify your model setup
-qresponder answer \
-  --questionnaire tests/fixtures/sample.xlsx \
-  --kb tests/fixtures/kb \
-  --qa qa.example.yaml \
-  --out ./out
-```
+- **Grounded answering, one path** — Tier-1 library reuse → hybrid retrieval
+  (BM25 + dense + RRF) → rerank → generation from context only → faithfulness →
+  confidence, or **abstain**. No path answers without grounding.
+- **Batch questionnaires** — drop many `.docx/.pdf/.xlsx/.csv`; watch the live "AI
+  Thinking" processing; download filled originals with per-file stats.
+- **Ask** — one question → a grounded, cited answer (or honest abstention), with inline
+  **Regenerate** (style-only) and Save-to-library.
+- **Knowledge Base** — Q&A entries, cross-file **Flagged** resolve, **Duplicates**
+  (`kb-check`), and format-preserving write-back that never overwrites your originals.
+- **Connections** — pull docs from Folder, Website, Confluence, Notion, Google Drive,
+  SharePoint, OneDrive; add → test → sync from the UI.
+- **KB Insights** — a knowledge-*gap* report: what your KB can't yet answer, with what
+  to add next. Plus completion/auto-answer analytics. Local read-only.
+- **Bring your own model** — local (Ollama/vLLM/LM Studio) or Anthropic/OpenAI/Gemini/
+  DeepSeek; a live model picker; no silent mock fallback.
+- **Runs anywhere** — one-command Docker, a published multi-arch image, or `pipx`.
 
-Outputs land in `./out`: `answered.xlsx`, `results.json`, and a human-first
-`review.md` (NEEDS_REVIEW + LOW-confidence items first, grouped by reason).
+## Connectors
+
+Folder · Website · **Confluence** · **Notion** · **Google Drive** · **SharePoint** ·
+**OneDrive**. Credentials are registered once server-side (OAuth app or a token in
+`.env`) and **never reach the browser**; connectors fetch **only** on an explicit
+test/sync, never during answering. Setup + a live-verify checklist:
+**[docs/connectors.md](docs/connectors.md)**.
+
+## Not this (by design)
+
+Single-user and local. **No** login/accounts/billing, **no** multi-tenant SaaS, **no**
+per-user analytics or telemetry, **no** external customer-facing hub. Optional auth +
+reverse-proxy hosting is available but opt-in — **[docs/hosting.md](docs/hosting.md)**.
+
+## Documentation
+
+[Install](docs/install.md) · [Usage](docs/usage.md) · [Connectors](docs/connectors.md)
+· [Security & privacy](docs/privacy.md) · [Hosting](docs/hosting.md) ·
+[Architecture](ARCHITECTURE.md) · [Contributing](CONTRIBUTING.md) ·
+[Changelog](CHANGELOG.md) · [Security policy](SECURITY.md)
 
 ## Web UI — open it and follow the wizard (no files to edit)
 
