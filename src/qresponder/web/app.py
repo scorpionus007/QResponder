@@ -128,6 +128,8 @@ def create_app(config: Config | None = None, model_fetch=None) -> FastAPI:
 
         @app.middleware("http")
         async def _require_token(request, call_next):
+            if request.url.path == "/healthz":  # liveness probe is always open
+                return await call_next(request)
             supplied = ""
             auth = request.headers.get("authorization", "")
             if auth.lower().startswith("bearer "):
@@ -229,6 +231,11 @@ def create_app(config: Config | None = None, model_fetch=None) -> FastAPI:
             return store.get(workspace_id)
         except WorkspaceError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
+
+    @app.get("/healthz")
+    def healthz():
+        """Liveness probe for container healthchecks / smoke tests. Always open."""
+        return {"ok": True}
 
     # ---- status / providers / doctor --------------------------------------
     @app.get("/api/status")

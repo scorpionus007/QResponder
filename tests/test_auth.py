@@ -21,6 +21,14 @@ def test_no_auth_by_default(tmp_path):
     assert client.get("/api/status").status_code == 200
 
 
+def test_healthz_always_open(tmp_path):
+    # Liveness probe stays open even when the auth token is set (for container checks).
+    assert _app(tmp_path).get("/healthz").json() == {"ok": True}
+    gated = _app(tmp_path, auth_token="tok")
+    assert gated.get("/healthz").status_code == 200
+    assert gated.get("/api/status").status_code == 401
+
+
 def test_token_gates_when_set(tmp_path):
     client = _app(tmp_path, auth_token="s3cret-token")
     # Without the token → 401 on API and the app.
