@@ -188,24 +188,41 @@ class RetrievalKB:
         bm_scores = bm25.get_scores(_tokens(query))
         bm_pos = _rank_positions(list(bm_scores))
 
-        # Dense — cosine over (normalized) embeddings.
-        self._ensure_vecs()
-        qv = np.asarray(self._get_embedder().embed([query])[0], dtype=float)
-        sub = self._chunk_vecs[idxs]
-        dense_scores = sub @ qv
-        dense_pos = _rank_positions(list(dense_scores))
+        # Dense — cosine over (normalized) embeddings. Optional: if the embedder
+        # deps (sentence-transformers/torch — the `retrieval` extra) aren't installed,
+        # degrade GRACEFULLY to BM25-only ranking rather than failing. Lexical BM25
+        # already handles keyword-heavy questionnaire content well.
+        dense_ok = True
+        try:
+            self._ensure_vecs()
+            qv = np.asarray(self._get_embedder().embed([query])[0], dtype=float)
+            sub = self._chunk_vecs[idxs]
+            dense_scores = sub @ qv
+            dense_pos = _rank_positions(list(dense_scores))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Dense retrieval unavailable (%s) — falling back to BM25-only. "
+                        "Install the `retrieval` extra for hybrid + rerank.", type(exc).__name__)
+            dense_ok = False
 
-        # Fuse with Reciprocal Rank Fusion (k = rrf_k).
-        fused = {}
-        for local in range(len(idxs)):
-            fused[local] = 1.0 / (self.rrf_k + bm_pos[local] + 1) + 1.0 / (
-                self.rrf_k + dense_pos[local] + 1
-            )
-        top_local = sorted(fused, key=lambda i: fused[i], reverse=True)[: self.top_n]
+        if dense_ok:
+            # Fuse with Reciprocal Rank Fusion (k = rrf_k).
+            fused = {}
+            for local in range(len(idxs)):
+                fused[local] = 1.0 / (self.rrf_k + bm_pos[local] + 1) + 1.0 / (
+                    self.rrf_k + dense_pos[local] + 1
+                )
+            top_local = sorted(fused, key=lambda i: fused[i], reverse=True)[: self.top_n]
+        else:
+            top_local = sorted(range(len(idxs)), key=lambda i: bm_pos[i])[: self.top_n]
 
-        # Cross-encoder rerank the fused candidates; keep top_k.
+        # Cross-encoder rerank the candidates; if the reranker is unavailable, keep the
+        # fused/BM25 order.
         cand_texts = [texts[i] for i in top_local]
-        reranked = self._get_reranker().rerank(query, cand_texts)  # [(idx_in_cand, score)]
+        try:
+            reranked = self._get_reranker().rerank(query, cand_texts)  # [(idx_in_cand, score)]
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Reranker unavailable (%s) — keeping the fused order.", type(exc).__name__)
+            reranked = [(i, 1.0 / (i + 1)) for i in range(len(cand_texts))]
         out: list[tuple[KBChunk, float]] = []
         for cand_idx, score in reranked[: self.top_k]:
             chunk = self.chunks[idxs[top_local[cand_idx]]]

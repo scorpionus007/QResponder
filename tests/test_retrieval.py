@@ -56,6 +56,26 @@ def test_exact_term_retrieved_via_bm25_when_dense_is_flat():
     assert all(c.source != "training.md" for c, _ in hits)
 
 
+class _BrokenEmbedder:
+    """Simulates the embedder deps (sentence-transformers/torch) being absent."""
+
+    def embed(self, texts):
+        raise ImportError("sentence-transformers not installed")
+
+
+def test_retrieve_degrades_to_bm25_when_embedder_unavailable():
+    """Without the retrieval extra, retrieve() falls back to BM25-only instead of
+    crashing — a large KB is still searchable."""
+    chunks = [
+        KBChunk(source="certs.md", text="We maintain ISO 27001 certification, audited annually.", tags=["soc2"], tier=2),
+        KBChunk(source="offices.md", text="Our offices are in Berlin and Tokyo.", tags=["soc2"], tier=2),
+    ]
+    kb = RetrievalKB(chunks, embedder=_BrokenEmbedder(), reranker=StubReranker(),
+                     top_n=20, top_k=5, rrf_k=60)
+    hits = kb.retrieve("ISO 27001 certification", scope_tags=["soc2"])
+    assert hits and "ISO 27001" in hits[0][0].text  # BM25 still surfaces the match
+
+
 def test_chunking_respects_size_and_structure():
     chunks = chunk_kb_dir(FIX / "kb")
     assert chunks
