@@ -39,10 +39,12 @@ def _paged(cloud_id: str, token: str, path: str, fetch, cap: int) -> list[dict]:
 
 
 def list_spaces(token: str, cloud_id: str, fetch=None, max_spaces: int = 500) -> list[dict]:
-    """List the spaces the signed-in user can see: [{key, name, id}]. `fetch(cloud_id,
-    token, path) -> dict` is injectable so tests stay offline. Confluence REST v2."""
+    """List the team spaces the signed-in user can see: [{key, name, id}]. Personal
+    spaces (key starts with '~') are dropped as noise; all real spaces are kept.
+    `fetch(cloud_id, token, path) -> dict` is injectable so tests stay offline. v2."""
     rows = _paged(cloud_id, token, "/wiki/api/v2/spaces?limit=100", fetch, max_spaces)
-    return [{"key": s.get("key"), "name": s.get("name") or s.get("key"), "id": s.get("id")} for s in rows]
+    return [{"key": s.get("key"), "name": s.get("name") or s.get("key"), "id": s.get("id")}
+            for s in rows if not str(s.get("key", "")).startswith("~")]
 
 
 class ConfluenceConnector(TokenConnector):

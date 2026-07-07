@@ -622,11 +622,34 @@ def create_app(config: Config | None = None, model_fetch=None) -> FastAPI:
                                 "wid": wid, "label": label or OAUTH_SPECS[provider]["label"]}
         return {"authorize_url": authorize_url(provider, client_id, redirect_uri, state, challenge)}
 
+    def _refresh_global(provider: str) -> bool:
+        """Refresh the global-signin OAuth token (used by the Confluence space picker)
+        and persist it. Server-side only; returns True on success."""
+        from ..connectors.oauth import client_credentials, refresh_access_token
+
+        tok = oauth_tokens.load(provider) or {}
+        if not tok.get("refresh_token"):
+            return False
+        cid, csecret = client_credentials(config, provider)
+        if not (cid and csecret):
+            return False
+        try:
+            fresh = refresh_access_token(provider, tok["refresh_token"], cid, csecret, fetch=app.state.oauth_fetch)
+        except Exception:  # noqa: BLE001
+            return False
+        tok["access_token"] = fresh["access_token"]
+        if fresh.get("refresh_token"):
+            tok["refresh_token"] = fresh["refresh_token"]
+        oauth_tokens.save(provider, tok)
+        return True
+
     @app.get("/api/connectors/confluence/spaces")
     def confluence_spaces():
         """List the Confluence spaces the signed-in user can see, so the UI can offer
-        a space picker (choose 'Engineering' by name instead of typing a key)."""
+        a space picker. Auto-refreshes an expired token once (Atlassian tokens are
+        short-lived) so the picker doesn't die between sessions."""
         from ..connectors.confluence import list_spaces
+        from ..connectors.oauth import is_auth_error
 
         tok = oauth_tokens.load("confluence") or {}
         if not (tok.get("access_token") and tok.get("cloud_id")):
@@ -634,7 +657,13 @@ def create_app(config: Config | None = None, model_fetch=None) -> FastAPI:
         try:
             return {"spaces": list_spaces(tok["access_token"], tok["cloud_id"], fetch=app.state.confluence_fetch)}
         except Exception as exc:  # noqa: BLE001
-            raise HTTPException(status_code=502, detail=f"Couldn't list spaces: {exc}")
+            if is_auth_error(exc) and _refresh_global("confluence"):
+                tok = oauth_tokens.load("confluence")
+                try:
+                    return {"spaces": list_spaces(tok["access_token"], tok["cloud_id"], fetch=app.state.confluence_fetch)}
+                except Exception as exc2:  # noqa: BLE001
+                    raise HTTPException(status_code=502, detail=f"Couldn't list spaces: {type(exc2).__name__}")
+            raise HTTPException(status_code=502, detail=f"Couldn't list spaces: {type(exc).__name__}")
 
     @app.get("/api/connectors")
     def list_connectors():
