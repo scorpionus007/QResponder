@@ -42,38 +42,61 @@ def _coerce_question(raw: dict, index: int) -> Question | None:
     )
 
 
-def extract_questions(doc: Document, provider: LLMProvider) -> list[Question]:
-    """Extract questions from a document's IR. Retries the call once on parse failure."""
-    layout_ir = doc.render_markdown()
-    system = prompts.EXTRACT_SYSTEM
-    user = prompts.build_extract_user(layout_ir)
+# Elements per extraction call. Chunking bounds each call's OUTPUT so the JSON
+# array can never overflow a provider's token budget (incl. "thinking" tokens) —
+# extraction is correct at ANY questionnaire size, on any model.
+_ELEMENTS_PER_CHUNK = 60
+_EXTRACT_MAX_TOKENS = 8192
 
-    raw_items: list | None = None
+
+def _extract_chunk(doc: Document, elements: list, provider: LLMProvider) -> list[dict]:
+    """Run the LLM extractor over a bounded slice of the document. Returns raw dicts.
+    A parse failure on one chunk salvages what it can and doesn't sink the rest."""
+    sub = Document(source_file=doc.source_file, file_type=doc.file_type, elements=elements)
+    user = prompts.build_extract_user(sub.render_markdown())
     last_err: Exception | None = None
     for attempt in range(2):
-        # Generous budget: a large questionnaire yields a long JSON array, and some
-        # providers (e.g. Gemini's "thinking") consume part of the output budget
-        # before the JSON — too small a limit truncates the array mid-object.
-        text = provider.complete(system, user, max_tokens=8192)
+        text = provider.complete(prompts.EXTRACT_SYSTEM, user, max_tokens=_EXTRACT_MAX_TOKENS)
         try:
-            raw_items = parse_json_array(text)
-            break
+            return [r for r in parse_json_array(text) if isinstance(r, dict)]
         except ValueError as exc:
             last_err = exc
             log.warning("Extraction parse failed (attempt %d): %s", attempt + 1, exc)
+    raise ValueError(f"Failed to extract questions after 2 attempts: {last_err}")
 
-    if raw_items is None:
-        raise ValueError(
-            f"Failed to extract questions after 2 attempts: {last_err}"
-        )
 
+def extract_questions(doc: Document, provider: LLMProvider) -> list[Question]:
+    """Extract questions from a document's IR. The document is processed in bounded
+    chunks so no single model call can be truncated, regardless of questionnaire size;
+    results are merged and de-duplicated across chunks."""
+    elements = [e for e in doc.elements if (e.text or "").strip()]
+
+    raw_items: list[dict] = []
+    if len(elements) <= _ELEMENTS_PER_CHUNK:
+        raw_items = _extract_chunk(doc, elements, provider)
+    else:
+        n_chunks = (len(elements) + _ELEMENTS_PER_CHUNK - 1) // _ELEMENTS_PER_CHUNK
+        log.info("Large questionnaire (%d elements) — extracting in %d chunk(s).",
+                 len(elements), n_chunks)
+        for start in range(0, len(elements), _ELEMENTS_PER_CHUNK):
+            chunk = elements[start : start + _ELEMENTS_PER_CHUNK]
+            try:
+                raw_items.extend(_extract_chunk(doc, chunk, provider))
+            except ValueError as exc:  # one bad chunk shouldn't drop the whole file
+                log.warning("Chunk starting at element %d failed to parse: %s", start, exc)
+
+    # Coerce + de-duplicate across chunks (by answer/location anchor, else question text).
     questions: list[Question] = []
+    seen_keys: set[str] = set()
     for i, raw in enumerate(raw_items, start=1):
-        if not isinstance(raw, dict):
-            continue
         q = _coerce_question(raw, i)
-        if q is not None:
-            questions.append(q)
+        if q is None:
+            continue
+        key = (q.location_hint or q.answer_location_hint or q.text).strip().lower()
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        questions.append(q)
 
     # GUARDRAIL (F3): results are keyed by question id downstream; a model that
     # emits duplicate ids would silently drop questions. Make ids unique,
