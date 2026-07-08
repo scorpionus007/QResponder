@@ -15,8 +15,8 @@ QRESPONDER drafts **grounded, cited** answers to vendor security questionnaires
 upload your security posture to someone's cloud is a contradiction, so this one runs
 entirely on your infrastructure.
 
-> _(screenshot/GIF of the dashboard — Home · Upload · Ask · Insights — goes here:
-> `docs/dashboard.png`)_
+<img width="1777" height="1023" alt="Screenshot 2026-07-08 172437" src="https://github.com/user-attachments/assets/297e6529-38a4-4c4f-b729-d25d7008e2d7" />
+
 
 ## Quickstart
 
