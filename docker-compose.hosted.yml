@@ -1,0 +1,48 @@
+# QRESPONDER — hosted (production) stack: one command, automatic HTTPS.
+#
+# For putting it on a cloud VM (GCP/AWS/Azure/anywhere) reachable over a domain.
+# See docs/hosting.md for the full walkthrough (GCP included).
+#
+#   1. Point a DNS A record for your domain at the VM's public IP.
+#   2. In .env set:  QR_DOMAIN, QR_ACME_EMAIL, QRESPONDER_AUTH_TOKEN  (+ your model).
+#   3. docker compose -f docker-compose.hosted.yml up -d
+#   4. Open  https://<your-domain>/?token=<QRESPONDER_AUTH_TOKEN>  once.
+#
+# Security model: the app is NOT published to the host — only Caddy (80/443) is —
+# and the app requires QRESPONDER_AUTH_TOKEN. Two layers between the internet and
+# your knowledge base. Caddy provisions + renews the TLS cert automatically.
+
+services:
+  qresponder:
+    # Uses the published multi-arch image (no build on the VM). To build locally
+    # instead, replace `image:` with `build: .`.
+    image: ghcr.io/scorpionus007/qresponder:latest
+    pull_policy: always
+    env_file:
+      - .env
+    volumes:
+      - qr-workspaces:/data          # persistent workspaces + KB + runs
+    expose:
+      - "8000"                       # internal network only — never published
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    depends_on:
+      - qresponder
+    ports:
+      - "80:80"                      # HTTP → redirected to HTTPS + ACME challenge
+      - "443:443"                    # HTTPS (auto TLS)
+    environment:
+      QR_DOMAIN: ${QR_DOMAIN:?set QR_DOMAIN in .env}
+      QR_ACME_EMAIL: ${QR_ACME_EMAIL:?set QR_ACME_EMAIL in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data             # persists the TLS certificate
+      - caddy-config:/config
+    restart: unless-stopped
+
+volumes:
+  qr-workspaces:
+  caddy-data:
+  caddy-config:

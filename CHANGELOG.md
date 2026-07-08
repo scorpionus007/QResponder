@@ -6,6 +6,14 @@ versioning.
 
 ## [Unreleased]
 
+### Added
+- **One-command hosted stack.** `docker-compose.hosted.yml` + a `Caddyfile` run the app
+  internally with **Caddy for automatic Let's Encrypt HTTPS** in front — set
+  `QR_DOMAIN`, `QR_ACME_EMAIL`, `QRESPONDER_AUTH_TOKEN` and `docker compose -f
+  docker-compose.hosted.yml up -d`. The app is kept off the public interface (only
+  Caddy is exposed) and gated by the token. `docs/hosting.md` rewritten with a turnkey
+  GCP/VPC walkthrough (create VM → firewall → DNS → one command).
+
 ## [0.2.0] - 2026-07-06
 
 First open-source release: the full local-first dashboard, all seven source

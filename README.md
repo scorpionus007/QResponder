@@ -39,6 +39,11 @@ qresponder serve            # → http://127.0.0.1:8000
 Fully local, zero cloud: `docker compose --profile local up -d` bundles Ollama.
 More: **[docs/install.md](docs/install.md)** · **[docs/usage.md](docs/usage.md)**.
 
+**Host it for your team (HTTPS, one command):** on any cloud VM, set your domain +
+token in `.env` and `docker compose -f docker-compose.hosted.yml up -d` — Caddy gets
+you automatic TLS and the app is protected behind an access token. Step-by-step
+(GCP/AWS/Azure/VPC): **[docs/hosting.md](docs/hosting.md)**.
+
 ## Why it's honest by construction
 
 - **Grounded** — answers come *only* from your KB context; unsupported → `NEEDS_REVIEW`.

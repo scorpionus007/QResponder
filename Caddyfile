@@ -1,0 +1,14 @@
+# QRESPONDER — reverse proxy with automatic HTTPS (Let's Encrypt).
+# Used by docker-compose.hosted.yml. Set QR_DOMAIN + QR_ACME_EMAIL in .env.
+#
+# Caddy fetches + renews a TLS cert for your domain automatically. The app itself
+# is NOT published to the host — only Caddy can reach it — and the app requires
+# QRESPONDER_AUTH_TOKEN, so there are two layers between the internet and your KB.
+
+{$QR_DOMAIN} {
+	encode gzip
+	# TLS certificate is provisioned + renewed automatically for QR_DOMAIN.
+	tls {$QR_ACME_EMAIL}
+	# All traffic goes to the app on the internal Docker network.
+	reverse_proxy qresponder:8000
+}

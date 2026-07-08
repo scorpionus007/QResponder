@@ -1,93 +1,122 @@
-# Hosting QRESPONDER (optional — the default is local-only)
+# Hosting QRESPONDER
 
-QRESPONDER is a **local, single-user tool** by default: it binds `127.0.0.1`, has
-**no authentication**, and nothing leaves the host. That's the intended way to run
-it. This page is only for the *optional* case where you deliberately want to reach it
-from another machine.
+QRESPONDER is a **local, single-user tool** by default: it binds `127.0.0.1`, has no
+auth, and nothing leaves the host. That's the intended way to run it, and you don't
+need this page for it.
 
-> ⚠ **A no-auth instance on a network exposes your entire knowledge base.** Anyone
-> who can reach the port can read every document, answer, and connection status.
-> Do **not** bind to `0.0.0.0` or publish it without **both** a reverse proxy with
-> TLS **and** the auth token (or the proxy's own auth) in front.
+This page is for the *optional* case where you want to reach it from other machines —
+e.g. host it for your team on a cloud VM/VPC, the way you'd host any internal app.
+It's designed to be **one command with automatic HTTPS**.
 
-## 1. Turn on the optional access token
+> ⚠ **A no-auth instance on a network exposes your entire knowledge base.** The hosted
+> setup below fixes that with **TLS + an access token + the app kept off the public
+> interface** — don't shortcut it.
 
-Set an env var (any long random string). When it's set, **every** request to the app
-and API must carry it; when it's unset (default), there's no auth.
+---
+
+## One-command hosted stack (HTTPS, anywhere)
+
+The `docker-compose.hosted.yml` stack runs the app **internally** and puts **Caddy** in
+front for automatic Let's Encrypt TLS. You set three values and run one command.
+
+**Prerequisites:** a VM with Docker + a domain (or subdomain) whose DNS **A record**
+points at the VM's public IP, and ports **80** and **443** open.
 
 ```bash
-export QRESPONDER_AUTH_TOKEN="$(openssl rand -hex 24)"
+# On the VM:
+curl -fsSLO https://raw.githubusercontent.com/scorpionus007/QResponder/main/docker-compose.hosted.yml
+curl -fsSLO https://raw.githubusercontent.com/scorpionus007/QResponder/main/Caddyfile
+curl -fsSLO https://raw.githubusercontent.com/scorpionus007/QResponder/main/.env.example
+mv .env.example .env
+
+# Edit .env and set at least:
+#   QR_DOMAIN=qresponder.yourcompany.com
+#   QR_ACME_EMAIL=you@yourcompany.com
+#   QRESPONDER_AUTH_TOKEN=<paste `openssl rand -hex 24`>
+#   (+ your model — a local Ollama, or a cloud provider key)
+
+docker compose -f docker-compose.hosted.yml up -d
 ```
 
-Ways to supply it:
-- **Header** (recommended, e.g. injected by a proxy): `Authorization: Bearer <token>`
-- **First load in a browser**: open `https://your-host/?token=<token>` once — the app
-  sets an `httponly`, `samesite=strict` cookie and subsequent requests pass.
+Then open **`https://<QR_DOMAIN>/?token=<QRESPONDER_AUTH_TOKEN>`** once. The app sets a
+cookie and you're in; share the URL (with the token) only with people who should have
+access. Caddy fetches and renews the certificate automatically.
 
-The token is compared in constant time and never appears in a response body or log.
-It is **not** a substitute for TLS + a proxy — it's a second layer.
+**Why this is safe:** the app container is **not** published to the host (only Caddy's
+80/443 are), and the app **requires the token** — so there are two layers between the
+internet and your KB, over TLS.
 
-## 2. Put a reverse proxy with TLS in front
+---
 
-Run the app bound to loopback (or a private interface) and let the proxy terminate
-TLS and (optionally) add its own auth.
+## GCP walkthrough (Compute Engine / VPC)
 
-### Caddy (simplest — automatic TLS)
+This is the exact flow to host it in a GCP project/VPC:
 
-```caddy
-qresponder.example.com {
-    reverse_proxy 127.0.0.1:8000
-    # Optional: proxy-level basic auth on top of the app token.
-    basic_auth {
-        # generate with: caddy hash-password
-        admin <bcrypt-hash>
-    }
-    # Inject the app token so the browser never needs it:
-    reverse_proxy 127.0.0.1:8000 {
-        header_up Authorization "Bearer {env.QRESPONDER_AUTH_TOKEN}"
-    }
-}
-```
+1. **Create a VM.** Compute Engine → Create instance. An `e2-small`/`e2-medium` is
+   plenty (bump RAM if you'll run a local model on the same box). Boot disk: Ubuntu
+   22.04+. Under **Firewall**, tick **Allow HTTP** and **Allow HTTPS** (or add a VPC
+   firewall rule allowing `tcp:80,443` from the ranges you want — e.g. your office/VPN
+   CIDR only, for an internal tool).
+2. **Reserve/point DNS.** Give the VM a static external IP (VPC network → IP addresses),
+   then add a DNS **A record** for `qresponder.yourcompany.com` → that IP.
+3. **Install Docker** (SSH into the VM):
+   ```bash
+   curl -fsSL https://get.docker.com | sh
+   sudo usermod -aG docker $USER && newgrp docker
+   ```
+4. **Run the stack** — the "One-command hosted stack" block above.
+5. **Open** `https://qresponder.yourcompany.com/?token=…`. Done.
 
-### nginx
+For an **internal-only** deployment (recommended for a security tool): instead of
+opening 80/443 to the world, restrict the VPC firewall rule to your corporate/VPN CIDR,
+or keep the VM on a private subnet and reach it over your VPN / an internal load
+balancer. The token + TLS still apply.
+
+Same steps work on **AWS EC2**, **Azure VM**, **DigitalOcean**, Hetzner, or a bare VM —
+only the "create VM + firewall + static IP + DNS" UI differs.
+
+---
+
+## Bring your own reverse proxy (nginx / Traefik)
+
+If you already run a proxy, skip Caddy: run the app bound to loopback (the default
+`docker-compose.yml`, or `qresponder serve`), set `QRESPONDER_AUTH_TOKEN`, and proxy to
+`127.0.0.1:8000`. The app enforces the token; your proxy adds TLS (and optionally its
+own auth). The proxy can inject the token so browsers don't need it:
 
 ```nginx
-server {
-    listen 443 ssl;
-    server_name qresponder.example.com;
-    ssl_certificate     /etc/letsencrypt/live/qresponder.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/qresponder.example.com/privkey.pem;
-
-    auth_basic "QRESPONDER";
-    auth_basic_user_file /etc/nginx/.htpasswd;
-
-    location / {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_set_header Authorization "Bearer ${QRESPONDER_AUTH_TOKEN}";
-        proxy_set_header Host $host;
-    }
+location / {
+    proxy_pass http://127.0.0.1:8000;
+    proxy_set_header Authorization "Bearer ${QRESPONDER_AUTH_TOKEN}";
+    proxy_set_header Host $host;
 }
 ```
 
-### Traefik
-
-Use a `Host()` router with a TLS resolver and a `basicauth` middleware, forwarding to
-the container on the loopback network. Add a headers middleware to inject the
+Traefik: a `Host()` router with a TLS resolver + a headers middleware injecting the
 `Authorization: Bearer` token.
 
-## 3. Run the container bound to the proxy only
+---
 
-In `docker-compose.yml`, keep the port mapped to loopback (`127.0.0.1:8000:8000`) and
-put the proxy on the same host, or use an internal Docker network so the app port is
-never published to the outside at all.
+## The access token, in detail
+
+`QRESPONDER_AUTH_TOKEN` — when set, **every** request to the app + API must carry it
+(unset by default = the local no-auth experience). Supply it via:
+
+- **`Authorization: Bearer <token>`** header (what a proxy injects), or
+- opening **`https://host/?token=<token>`** once (the app sets an `httponly`,
+  `samesite=strict` cookie).
+
+It's compared in constant time and never appears in a response body or log. The
+`/healthz` liveness endpoint stays open so container/uptime checks work.
 
 ## What still holds when hosted
 
-- **Answering is still local**: with a local model + local embeddings/reranker the
-  answering path makes **zero external calls**. Cloud provider keys (if you use one)
-  stay in `.env` on the server, never sent to the browser.
+- **Answering stays local**: with a local model + local embeddings/reranker, the
+  answering path makes **zero external calls**; a cloud provider key (if used) stays in
+  `.env` on the server, never in the browser.
 - **Connector secrets stay server-side** and are never returned to the browser.
 - Connectors fetch **only** on explicit test/sync — never during answering.
+- **No telemetry.**
 
-If any of those matter to you, prefer the local default and reach it over SSH port-
-forwarding (`ssh -L 8000:127.0.0.1:8000 host`) instead of exposing it at all.
+If the KB must never be reachable off-host at all, don't host it — reach the local
+default over SSH: `ssh -L 8000:127.0.0.1:8000 the-vm`, then open `http://127.0.0.1:8000`.
