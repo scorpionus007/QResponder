@@ -296,9 +296,11 @@ input[type=checkbox] { min-height: auto; width: 16px; height: 16px; accent-color
 .q-text { font-weight: var(--fw-semibold); font-size: var(--fs-lg); color: var(--text-1); line-height: var(--lh-snug); }
 .badges { display: flex; gap: var(--sp-2); flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
 .answer-box { margin: var(--sp-3) 0; }
-/* the evidence spine: grounded content is visibly tied to a source */
-.rail { border-left: 2px solid var(--accent-line); padding-left: var(--sp-4); margin: var(--sp-3) 0; }
-.rail .rail-src { font-family: var(--mono); font-size: var(--fs-caption); color: var(--accent);
+/* the evidence spine: grounded content is visibly tied to a source.
+   NB: distinct class from the left nav `.rail` — do not merge the two. */
+.evrail { display: block; width: auto; border-left: 2px solid var(--accent-line);
+  padding-left: var(--sp-4); margin: var(--sp-3) 0; }
+.evrail .evrail-src { font-family: var(--mono); font-size: var(--fs-caption); color: var(--accent);
   text-transform: none; letter-spacing: 0; display: block; margin-bottom: var(--sp-1); }
 .panel { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-sm);
   padding: var(--sp-3) var(--sp-4); margin: var(--sp-3) 0; font-size: var(--fs-body); color: var(--text-2); }

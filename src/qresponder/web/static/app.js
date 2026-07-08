@@ -623,8 +623,8 @@ function groundedResult(r, opts) {
   } else {
     // Signature: the answer sits on the provenance rail, tagged with its top source.
     const topSrc = (r.citations && r.citations[0] && r.citations[0].source) || "grounded context";
-    card.append(el("div", { class: "answer-box" }, el("div", { class: "rail" },
-      el("span", { class: "rail-src" }, "grounded in · " + topSrc), el("div", {}, r.answer || "(no answer)"))));
+    card.append(el("div", { class: "answer-box" }, el("div", { class: "evrail" },
+      el("span", { class: "evrail-src" }, "grounded in · " + topSrc), el("div", {}, r.answer || "(no answer)"))));
     if (flagged && r.missing_info) card.append(el("div", { class: "panel warn" }, el("h4", {}, "Why flagged"), r.missing_info));
   }
 
@@ -652,7 +652,7 @@ function groundedResult(r, opts) {
       });
       actions.append(save);
     }
-    card.append(el("div", { class: "rail" }, el("span", { class: "rail-src" }, "refine"), guidance), actions);
+    card.append(el("div", { class: "evrail" }, el("span", { class: "evrail-src" }, "refine"), guidance), actions);
   }
   return card;
 }
