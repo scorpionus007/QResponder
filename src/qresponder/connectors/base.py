@@ -90,7 +90,7 @@ class TokenConnector(Connector):
     default_ext = ".txt"
 
     def __init__(self, target: str, token: str | None = None, base_url: str | None = None,
-                 tags=None, client=None, http=None, timeout: int = 15, max_items: int = 200):
+                 tags=None, client=None, http=None, timeout: int = 15, max_items: int = 2000):
         self.target = target
         self.token = token
         self.base_url = base_url

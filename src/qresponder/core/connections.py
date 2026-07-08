@@ -137,7 +137,7 @@ class ConnectionStore:
 
 
 def build_connector(type: str, config: dict, secret: dict | None, tags=None, client=None,
-                    http=None, probe: bool = False):
+                    http=None, probe: bool = False, default_max_items: int = 2000):
     """Map a connection (type + non-secret config + server-side secret) to a live
     connector. `client` (docs) and `http` (real API) are injectable so tests never hit
     a SaaS API; `probe` caps the fetch for a lightweight Test connection. Lazy imports
@@ -147,7 +147,7 @@ def build_connector(type: str, config: dict, secret: dict | None, tags=None, cli
     cfg = config or {}
     secret = secret or {}
     token = secret.get("access_token") or secret.get("token")
-    cap = 3 if probe else int(cfg.get("max_items", 200))
+    cap = 3 if probe else int(cfg.get("max_items") or default_max_items)
 
     if type == "folder":
         from ..connectors.folder import FolderConnector

@@ -6,6 +6,12 @@ versioning.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-06
+
+First open-source release: the full local-first dashboard, all seven source
+connectors (real APIs + OAuth + token refresh), one-command Docker + a published
+GHCR image, optional hosted auth, and complete docs — over the grounded engine.
+
 ### Added
 - **Open-source & run-anywhere (Phase 16).** One-command Docker: a multi-stage
   `Dockerfile` (non-root, web+retrieval, `HEALTHCHECK` on a new always-open `/healthz`)

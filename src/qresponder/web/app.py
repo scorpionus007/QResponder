@@ -470,7 +470,8 @@ def create_app(config: Config | None = None, model_fetch=None) -> FastAPI:
 
         tags = normalize_tags(conn.config.get("tags"))
         return build_connector(conn.type, conn.config, store.get_secret(conn.id), tags=tags,
-                               client=app.state.connector_client, http=app.state.connector_http, probe=probe)
+                               client=app.state.connector_client, http=app.state.connector_http,
+                               probe=probe, default_max_items=config.connector_max_items)
 
     def _refresh_secret(conn, store) -> bool:
         """Refresh the OAuth access token for a connection (using its stored refresh
@@ -738,7 +739,7 @@ def create_app(config: Config | None = None, model_fetch=None) -> FastAPI:
                                            token=_cf.get("access_token") or config.confluence_token,
                                            base_url=config.confluence_base_url, email=config.confluence_email,
                                            cloud_id=_cf.get("cloud_id"), tags=tags,
-                                           max_items=int(body.get("max_items", 200)))
+                                           max_items=int(body.get("max_items") or config.connector_max_items))
             elif kind == "notion":
                 from ..connectors.notion import NotionConnector
 

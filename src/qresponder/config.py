@@ -69,6 +69,8 @@ class Config(BaseModel):
     microsoft_client_id: str = ""
     microsoft_client_secret: str = ""
     oauth_redirect_base: str = "http://127.0.0.1:8000"
+    # Max documents/pages a single connector sync pulls per source (Phase 16).
+    connector_max_items: int = 2000
 
     # OPTIONAL, opt-in access control for networked/hosted mode (Phase 16). When set,
     # the web app + API require this token; UNSET (default) = no auth, for the local
@@ -183,6 +185,7 @@ _ENV_MAP = {
     "MICROSOFT_CLIENT_ID": "microsoft_client_id",
     "MICROSOFT_CLIENT_SECRET": "microsoft_client_secret",
     "OAUTH_REDIRECT_BASE": "oauth_redirect_base",
+    "CONNECTOR_MAX_ITEMS": "connector_max_items",
     "QRESPONDER_AUTH_TOKEN": "auth_token",
     "LLM_BASE_URL": "llm_base_url",
     "LLM_API_KEY": "llm_api_key",

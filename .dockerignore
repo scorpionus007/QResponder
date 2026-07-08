@@ -1,0 +1,34 @@
+# Keep the Docker build context small + never bake in secrets or local state.
+.git
+.github
+.venv
+venv
+env
+__pycache__
+*.py[cod]
+*.egg-info
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+coverage.xml
+
+# Secrets + local state (never in an image)
+.env
+*.key
+workspaces/
+web_runs/
+out/
+demo_out/
+models/
+.cache/
+.claude/
+
+# Dev-only / docs not needed at runtime
+tests
+docs
+scripts
+Makefile
+*.md
+!README.md
