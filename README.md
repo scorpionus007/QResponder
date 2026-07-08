@@ -2,11 +2,11 @@
 
 **Local-first, self-hostable, open-source security-questionnaire automation — your data never leaves the host.**
 
-[![CI](https://github.com/scorpionus007/QResponder-GRC/actions/workflows/ci.yml/badge.svg)](https://github.com/scorpionus007/QResponder-GRC/actions/workflows/ci.yml)
+[![CI](https://github.com/scorpionus007/QResponder/actions/workflows/ci.yml/badge.svg)](https://github.com/scorpionus007/QResponder/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/scorpionus007/QResponder-GRC?sort=semver)](https://github.com/scorpionus007/QResponder-GRC/releases)
-[![GHCR image](https://img.shields.io/badge/ghcr.io-qresponder-informational)](https://github.com/scorpionus007/QResponder-GRC/pkgs/container/qresponder)
-[![Stars](https://img.shields.io/github/stars/scorpionus007/QResponder-GRC?style=social)](https://github.com/scorpionus007/QResponder-GRC/stargazers)
+[![Release](https://img.shields.io/github/v/release/scorpionus007/QResponder?sort=semver)](https://github.com/scorpionus007/QResponder/releases)
+[![GHCR image](https://img.shields.io/badge/ghcr.io-qresponder-informational)](https://github.com/scorpionus007/QResponder/pkgs/container/qresponder)
+[![Stars](https://img.shields.io/github/stars/scorpionus007/QResponder?style=social)](https://github.com/scorpionus007/QResponder/stargazers)
 
 QRESPONDER drafts **grounded, cited** answers to vendor security questionnaires
 (SIG / CAIQ / VSAQ / custom Excel·Word·PDF) from **your own** knowledge base. It
@@ -23,8 +23,8 @@ entirely on your infrastructure.
 **Docker (one command):**
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/scorpionus007/QResponder-GRC/main/docker-compose.yml
-curl -fsSLO https://raw.githubusercontent.com/scorpionus007/QResponder-GRC/main/.env.example
+curl -fsSLO https://raw.githubusercontent.com/scorpionus007/QResponder/main/docker-compose.yml
+curl -fsSLO https://raw.githubusercontent.com/scorpionus007/QResponder/main/.env.example
 mv .env.example .env        # optional — a local model needs no key
 docker compose up -d        # → open http://localhost:8000
 ```

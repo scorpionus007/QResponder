@@ -3,8 +3,8 @@
 ## Docker (one command — recommended)
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/scorpionus007/QResponder-GRC/main/docker-compose.yml
-curl -fsSLO https://raw.githubusercontent.com/scorpionus007/QResponder-GRC/main/.env.example
+curl -fsSLO https://raw.githubusercontent.com/scorpionus007/QResponder/main/docker-compose.yml
+curl -fsSLO https://raw.githubusercontent.com/scorpionus007/QResponder/main/.env.example
 mv .env.example .env        # optional — a local model needs no key
 docker compose up -d        # → open http://localhost:8000
 ```
@@ -44,8 +44,8 @@ Extras: `web` (FastAPI UI), `retrieval` (sentence-transformers/torch for
 ## From source
 
 ```bash
-git clone https://github.com/scorpionus007/QResponder-GRC
-cd QResponder-GRC
+git clone https://github.com/scorpionus007/QResponder
+cd QResponder
 pip install -e ".[web,retrieval,dev]"
 pytest -q            # the whole suite runs offline
 qresponder serve

@@ -302,4 +302,4 @@ engine (Phases 0–3). 70 tests, all offline (MockProvider), temperature 0.0.
 - Shipped golden `eval.yaml`, demo script + Makefile, CI workflow, CONTRIBUTING,
   good-first-issues.
 
-[0.1.0]: https://github.com/scorpionus007/QResponder-GRC/releases/tag/v0.1.0
+[0.1.0]: https://github.com/scorpionus007/QResponder/releases/tag/v0.1.0
