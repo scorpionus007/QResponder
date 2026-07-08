@@ -28,28 +28,24 @@ docker run --rm -p 127.0.0.1:8000:8000 -v qr-data:/data \
   -e LLM_PROVIDER=mock ghcr.io/scorpionus007/qresponder:latest
 ```
 
-## pip / pipx
-
-```bash
-pipx install "qresponder[web,retrieval]"      # isolated CLI + web UI
-# or
-pip install "qresponder[web,retrieval]"
-qresponder serve                               # → http://127.0.0.1:8000
-```
-
-Extras: `web` (FastAPI UI), `retrieval` (sentence-transformers/torch for
-`--mode retrieval`), `anthropic` / `openai` (cloud SDKs), `connectors`
-(SaaS connector SDKs). Install only what you need.
-
-## From source
+## From source (Python 3.10+)
 
 ```bash
 git clone https://github.com/scorpionus007/QResponder
 cd QResponder
-pip install -e ".[web,retrieval,dev]"
-pytest -q            # the whole suite runs offline
-qresponder serve
+pip install -e ".[web,retrieval]"      # add ,dev to run the test suite
+qresponder serve                        # → http://127.0.0.1:8000
 ```
+
+Extras: `web` (FastAPI UI), `retrieval` (sentence-transformers/torch for full dense
+hybrid retrieval + rerank; retrieval mode falls back to BM25 without it),
+`anthropic` / `openai` (cloud SDKs), `connectors` (SaaS connector SDKs). Install only
+what you need.
+
+Run the offline test suite with `pip install -e ".[web,retrieval,dev]" && pytest -q`.
+
+> **pip / pipx:** a published PyPI package (`pipx install qresponder`) is coming
+> soon. For now, use Docker (above) or this from-source install.
 
 ## Configuration
 

@@ -29,12 +29,16 @@ mv .env.example .env        # optional — a local model needs no key
 docker compose up -d        # → open http://localhost:8000
 ```
 
-**pip / pipx:**
+**From source (Python 3.10+):**
 
 ```bash
-pipx install "qresponder[web,retrieval]"
+git clone https://github.com/scorpionus007/QResponder && cd QResponder
+pip install -e ".[web,retrieval]"
 qresponder serve            # → http://127.0.0.1:8000
 ```
+
+> A published PyPI package (`pipx install qresponder`) is coming soon — for now use
+> Docker or the from-source install above.
 
 Fully local, zero cloud: `docker compose --profile local up -d` bundles Ollama.
 More: **[docs/install.md](docs/install.md)** · **[docs/usage.md](docs/usage.md)**.
@@ -73,7 +77,7 @@ you automatic TLS and the app is protected behind an access token. Step-by-step
   to add next. Plus completion/auto-answer analytics. Local read-only.
 - **Bring your own model** — local (Ollama/vLLM/LM Studio) or Anthropic/OpenAI/Gemini/
   DeepSeek; a live model picker; no silent mock fallback.
-- **Runs anywhere** — one-command Docker, a published multi-arch image, or `pipx`.
+- **Runs anywhere** — one-command Docker, a published multi-arch image, or from source.
 
 ## Connectors
 
